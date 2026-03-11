@@ -37,6 +37,13 @@ def save_profiles(profiles: dict):
         json.dump(profiles, f)
 
 
+# Persistent HTTP session to the ESP32 — reuses the TCP connection
+_session = requests.Session()
+_session.headers["Connection"] = "keep-alive"
+# (connect_timeout, read_timeout) — give the device 25 s to send the JPEG
+_ESP32_TIMEOUT = (4, 25)
+
+
 def _esp32_base():
     return ESP32_URL.rstrip("/")
 
@@ -44,7 +51,7 @@ def _esp32_base():
 def fetch_esp32_image():
     """Fetch image from ESP32 and return decoded BGR numpy array."""
     try:
-        r = requests.get(f"{_esp32_base()}/capture", timeout=10)
+        r = _session.get(f"{_esp32_base()}/capture", timeout=_ESP32_TIMEOUT)
         r.raise_for_status()
     except requests.RequestException as e:
         raise HTTPException(status_code=502, detail=f"ESP32 unreachable: {e}")
@@ -87,7 +94,7 @@ def api_config():
 def api_flash():
     """Proxy flash-toggle request to ESP32 so the browser stays same-origin."""
     try:
-        r = requests.get(f"{_esp32_base()}/flash", timeout=5)
+        r = _session.get(f"{_esp32_base()}/flash", timeout=(4, 8))
         r.raise_for_status()
         return r.json()
     except requests.RequestException as e:

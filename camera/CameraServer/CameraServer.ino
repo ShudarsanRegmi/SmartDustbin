@@ -1,6 +1,7 @@
 #include "esp_camera.h"
 #include <WiFi.h>
 #include "esp_http_server.h"
+#include "esp_task_wdt.h"
 
 const char* ssid = "Amrita_CHN";
 const char* password = "amrita@321";
@@ -32,9 +33,11 @@ httpd_handle_t server = NULL;
 
 static esp_err_t capture_handler(httpd_req_t *req) {
 
-  Serial.println("Capture request received");
+  // With fb_count=2 the oldest buffered frame may be stale – discard it first
+  camera_fb_t *stale = esp_camera_fb_get();
+  if (stale) esp_camera_fb_return(stale);
 
-  camera_fb_t * fb = esp_camera_fb_get();
+  camera_fb_t *fb = esp_camera_fb_get();
 
   if (!fb) {
     Serial.println("Camera capture failed");
@@ -43,12 +46,17 @@ static esp_err_t capture_handler(httpd_req_t *req) {
   }
 
   httpd_resp_set_type(req, "image/jpeg");
-  httpd_resp_send(req, (const char *)fb->buf, fb->len);
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
 
+  char len_buf[16];
+  snprintf(len_buf, sizeof(len_buf), "%u", fb->len);
+  httpd_resp_set_hdr(req, "Content-Length", len_buf);
+
+  httpd_resp_send(req, (const char *)fb->buf, fb->len);
   esp_camera_fb_return(fb);
 
-  Serial.println("Image sent");
-
+  Serial.printf("Capture sent: %u bytes\n", fb->len);
   return ESP_OK;
 }
 
@@ -97,6 +105,9 @@ static esp_err_t stream_handler(httpd_req_t *req) {
 
     esp_camera_fb_return(fb);
 
+    // Yield to RTOS so the watchdog is fed and other tasks can run
+    taskYIELD();
+
     if (res != ESP_OK) break;
   }
 
@@ -130,7 +141,13 @@ static esp_err_t flash_handler(httpd_req_t *req) {
 
 void startServer() {
 
-  httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+  httpd_config_t config      = HTTPD_DEFAULT_CONFIG();
+  config.max_uri_handlers    = 8;
+  config.stack_size          = 8192;
+  config.max_open_sockets    = 7;    // allow more concurrent connections
+  config.lru_purge_enable    = true; // auto-close oldest idle socket when limit hit
+  config.recv_wait_timeout   = 10;
+  config.send_wait_timeout   = 10;
 
   if (httpd_start(&server, &config) == ESP_OK) {
 
@@ -167,6 +184,8 @@ void startServer() {
 void connectWiFi() {
 
   Serial.println("Connecting to WiFi...");
+  WiFi.setSleep(false);              // disable modem sleep – eliminates wake-up latency
+  WiFi.setTxPower(WIFI_POWER_19_5dBm); // max TX power for better throughput
   WiFi.begin(ssid, password);
 
   int retry = 0;
@@ -224,9 +243,18 @@ void setup() {
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
 
-  config.frame_size = FRAMESIZE_VGA;
-  config.jpeg_quality = 12;
-  config.fb_count = 1;
+  // Use PSRAM for frame buffers when available (AI Thinker has 4 MB PSRAM)
+  if (psramFound()) {
+    config.frame_size    = FRAMESIZE_QVGA;  // 320x240 – fast transfer, good for face recog
+    config.jpeg_quality  = 12;              // slightly better quality when PSRAM handles buffers
+    config.fb_count      = 2;
+    config.fb_location   = CAMERA_FB_IN_PSRAM;
+  } else {
+    config.frame_size    = FRAMESIZE_QVGA;
+    config.jpeg_quality  = 15;
+    config.fb_count      = 1;
+    config.fb_location   = CAMERA_FB_IN_DRAM;
+  }
 
   Serial.println("Initializing camera...");
 
@@ -237,9 +265,24 @@ void setup() {
 
   Serial.println("Camera ready");
 
-  sensor_t * s = esp_camera_sensor_get();
+  sensor_t *s = esp_camera_sensor_get();
   s->set_vflip(s, 1);
   s->set_hmirror(s, 1);
+
+  // Image quality tuning – cleaner image at lower bitrate
+  s->set_whitebal(s, 1);       // auto white balance on
+  s->set_awb_gain(s, 1);       // AWB gain on
+  s->set_wb_mode(s, 0);        // auto WB mode
+  s->set_exposure_ctrl(s, 1);  // auto exposure on
+  s->set_aec2(s, 1);           // AEC DSP on (better exposure in low light)
+  s->set_gain_ctrl(s, 1);      // auto gain on
+  s->set_agc_gain(s, 0);       // start gain at 0 (auto will adjust)
+  s->set_gainceiling(s, (gainceiling_t)6); // max gain ceiling
+  s->set_bpc(s, 1);            // bad pixel correction
+  s->set_wpc(s, 1);            // white pixel correction
+  s->set_raw_gma(s, 1);        // gamma correction
+  s->set_lenc(s, 1);           // lens shading correction
+  s->set_dcw(s, 1);            // downsize enable
 
   pinMode(FLASH_GPIO_NUM, OUTPUT);
   digitalWrite(FLASH_GPIO_NUM, LOW);
