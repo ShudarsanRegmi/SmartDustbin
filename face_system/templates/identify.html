@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Identify – Face Recognition</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <nav class="navbar">
+    <a class="brand" href="/">&#x1F9E0; FaceID</a>
+    <div class="nav-links">
+      <a href="/">Dashboard</a>
+      <a href="/enroll">Enroll</a>
+      <a href="/identify" class="active">Identify</a>
+    </div>
+  </nav>
+
+  <main class="page-container">
+    <div class="page-header">
+      <h1>Face Identification</h1>
+      <p class="subtitle">Capture a photo from the ESP32 camera and match it against the enrolled database.</p>
+    </div>
+
+    <div class="identify-layout">
+      <!-- Camera panel -->
+      <div class="card identify-camera-card">
+        <h2 class="card-title">&#x1F4F7; Live Capture</h2>
+
+        <div class="preview-box large" id="previewBox">
+          <div class="preview-placeholder" id="previewPlaceholder">
+            <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="4" y="12" width="56" height="40" rx="6" stroke="currentColor" stroke-width="3"/>
+              <circle cx="32" cy="32" r="10" stroke="currentColor" stroke-width="3"/>
+              <circle cx="32" cy="32" r="3" fill="currentColor"/>
+            </svg>
+            <span>Press Verify to capture</span>
+          </div>
+          <img id="previewImg" src="" alt="Captured" style="display:none;" />
+          <img id="streamImg" alt="Live Stream" style="display:none; width:100%; height:100%; object-fit:cover;" />
+        </div>
+
+        <button class="btn btn-primary full-width mt-sm" id="verifyBtn" onclick="runIdentify()">
+          <span class="btn-icon">&#x1F50D;</span> Capture &amp; Verify
+        </button>
+
+        <div class="cam-controls mt-xs">
+          <button class="btn btn-secondary" id="streamBtn" onclick="toggleStream()">
+            &#x1F4E1; Live Stream
+          </button>
+          <button class="btn btn-ghost" id="flashBtn" onclick="toggleFlash()">
+            &#x1F526; Flash
+          </button>
+        </div>
+
+        <button class="btn btn-ghost full-width mt-xs" id="clearBtn" onclick="clearResult()" style="display:none;">
+          &#x1F5D1; Clear
+        </button>
+      </div>
+
+      <!-- Result panel -->
+      <div class="card identify-result-card">
+        <h2 class="card-title">&#x1F4CA; Result</h2>
+
+        <div id="resultIdle" class="result-idle">
+          <div class="result-icon">&#x1F914;</div>
+          <p>Waiting for capture…</p>
+        </div>
+
+        <div id="resultRecognized" class="result-recognized" style="display:none;">
+          <div class="result-icon success">&#x2705;</div>
+          <p class="result-name" id="resultName">—</p>
+          <p class="result-label">Identified</p>
+          <div class="confidence-bar-wrap">
+            <div class="confidence-bar-track">
+              <div class="confidence-bar-fill" id="confidenceBar"></div>
+            </div>
+            <span class="confidence-value" id="confidenceValue"></span>
+          </div>
+          <p class="muted small" id="scoreRaw"></p>
+        </div>
+
+        <div id="resultUnknown" class="result-unknown" style="display:none;">
+          <div class="result-icon warning">&#x26A0;&#xFE0F;</div>
+          <p class="result-name">Unknown Person</p>
+          <p class="result-label">No match found in database</p>
+          <p class="muted small" id="scoreRawUnknown"></p>
+        </div>
+
+        <div id="resultNoFace" class="result-unknown" style="display:none;">
+          <div class="result-icon warning">&#x1F6AB;</div>
+          <p class="result-name">No Face Detected</p>
+          <p class="result-label">Make sure a face is visible in the camera</p>
+        </div>
+
+        <div id="resultError" class="result-unknown" style="display:none;">
+          <div class="result-icon error">&#x274C;</div>
+          <p class="result-name">Error</p>
+          <p class="result-label" id="errorMsg"></p>
+        </div>
+
+        <div id="resultHistory" class="result-history" style="display:none;">
+          <h3 class="card-title mt-sm">Recent Results</h3>
+          <ul id="historyList" class="history-list"></ul>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/app.js"></script>
+  <script>loadConfig();</script>
+</html>

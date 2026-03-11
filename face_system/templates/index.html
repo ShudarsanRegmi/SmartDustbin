@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard – Face Recognition</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <nav class="navbar">
+    <a class="brand" href="/">&#x1F9E0; FaceID</a>
+    <div class="nav-links">
+      <a href="/" class="active">Dashboard</a>
+      <a href="/enroll">Enroll</a>
+      <a href="/identify">Identify</a>
+    </div>
+  </nav>
+
+  <main class="page-container">
+    <div class="page-header">
+      <h1>Dashboard</h1>
+      <p class="subtitle">ESP32-CAM face recognition system — manage enrolled people and run identification.</p>
+    </div>
+
+    <!-- Quick-action cards -->
+    <div class="action-grid">
+      <a href="/enroll" class="action-card">
+        <div class="action-icon">&#x1F9CD;</div>
+        <div>
+          <div class="action-title">Enroll Person</div>
+          <div class="action-desc">Add a new face to the database</div>
+        </div>
+        <div class="action-arrow">&#x2192;</div>
+      </a>
+      <a href="/identify" class="action-card">
+        <div class="action-icon">&#x1F50D;</div>
+        <div>
+          <div class="action-title">Identify Person</div>
+          <div class="action-desc">Capture and match against database</div>
+        </div>
+        <div class="action-arrow">&#x2192;</div>
+      </a>
+    </div>
+
+    <!-- Stats row -->
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-value" id="statCount">—</div>
+        <div class="stat-label">People enrolled</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statPhotos">—</div>
+        <div class="stat-label">Total samples</div>
+      </div>
+    </div>
+
+    <!-- Enrolled profiles table -->
+    <div class="card mt-md">
+      <div class="card-header-row">
+        <h2 class="card-title">Enrolled People</h2>
+        <button class="btn btn-ghost sm" onclick="loadProfiles()">&#x21BB; Refresh</button>
+      </div>
+      <div id="profileList" class="profile-list">
+        <p class="muted">Loading…</p>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/app.js"></script>
+  <script>loadProfiles();</script>
+</body>
+</html>

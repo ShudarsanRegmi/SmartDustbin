@@ -1,0 +1,53 @@
+<html>
+
+<head>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/app.js"></script>
+</head>
+
+<body>
+
+<h1>Face Recognition Dashboard</h1>
+
+<div class="panel">
+
+<h2>Create Profile</h2>
+
+<form action="/create_profile" method="post">
+
+<input type="text" name="name" placeholder="Person name">
+
+<button>Create</button>
+
+</form>
+
+</div>
+
+<div class="panel">
+
+<h2>Profiles</h2>
+
+<ul>
+
+{% for p in profiles %}
+
+<li>{{p}}</li>
+
+{% endfor %}
+
+</ul>
+
+</div>
+
+<div class="panel">
+
+<h2>Recognition</h2>
+
+<button onclick="recognize()">Capture & Recognize</button>
+
+<p id="result"></p>
+
+</div>
+
+</body>
+</html>

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Enroll – Face Recognition</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <nav class="navbar">
+    <a class="brand" href="/">&#x1F9E0; FaceID</a>
+    <div class="nav-links">
+      <a href="/">Dashboard</a>
+      <a href="/enroll" class="active">Enroll</a>
+      <a href="/identify">Identify</a>
+    </div>
+  </nav>
+
+  <main class="page-container">
+    <div class="page-header">
+      <h1>Enroll New Face</h1>
+      <p class="subtitle">Capture a photo from the ESP32 camera and register a person in the database.</p>
+    </div>
+
+    <div class="card-grid">
+      <!-- Left: capture & form -->
+      <div class="card">
+        <h2 class="card-title">&#x1F4F7; Capture &amp; Register</h2>
+
+        <div class="preview-box" id="previewBox">
+          <div class="preview-placeholder" id="previewPlaceholder">
+            <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="32" cy="24" r="10" stroke="currentColor" stroke-width="3"/>
+              <path d="M10 52c0-12 10-20 22-20s22 8 22 20" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+            </svg>
+            <span>Preview will appear here</span>
+          </div>
+          <img id="previewImg" src="" alt="Preview" style="display:none;" />
+          <img id="streamImg" alt="Live Stream" style="display:none; width:100%; height:100%; object-fit:cover;" />
+          <div class="face-badge" id="faceBadge" style="display:none;"></div>
+        </div>
+
+        <div class="cam-controls">
+          <button class="btn btn-secondary" id="streamBtn" onclick="toggleStream()">
+            &#x1F4E1; Live Stream
+          </button>
+          <button class="btn btn-secondary" id="previewBtn" onclick="capturePreview()">
+            &#x1F4F8; Snapshot
+          </button>
+          <button class="btn btn-ghost" id="flashBtn" onclick="toggleFlash()">
+            &#x1F526; Flash
+          </button>
+        </div>
+
+        <div class="divider"></div>
+
+        <label class="field-label" for="nameInput">Person Name</label>
+        <input
+          id="nameInput"
+          class="text-input"
+          type="text"
+          placeholder="e.g. Alice"
+          autocomplete="off"
+        />
+
+        <button class="btn btn-primary full-width mt-sm" id="enrollBtn" onclick="enrollFace()" disabled>
+          <span class="btn-icon">&#x2705;</span> Capture &amp; Enroll
+        </button>
+
+        <div id="enrollStatus" class="status-box" style="display:none;"></div>
+      </div>
+
+      <!-- Right: enrolled list -->
+      <div class="card">
+        <h2 class="card-title">&#x1F4CB; Enrolled People</h2>
+        <div id="profileList" class="profile-list">
+          <p class="muted">Loading…</p>
+        </div>
+        <button class="btn btn-ghost full-width mt-sm" onclick="loadProfiles()">&#x21BB; Refresh</button>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/app.js"></script>
+  <script>
+    loadConfig();
+    loadProfiles();
+    document.getElementById('nameInput').addEventListener('input', function () {
+      document.getElementById('enrollBtn').disabled = this.value.trim() === '';
+    });
+  </script>
+</body>
+</html>
