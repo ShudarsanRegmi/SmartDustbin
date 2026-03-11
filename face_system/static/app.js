@@ -5,13 +5,18 @@
 // -----------------------------------------------------------------
 // ESP32 config (loaded once on pages that need the device)
 // -----------------------------------------------------------------
-let esp32BaseUrl = null;
+let esp32BaseUrl  = null;
+let plateCamUrl   = null;
+
+// Store last identified person so Plate Cam page can autofill it
+let _lastIdentifiedPerson = null;
 
 async function loadConfig() {
   try {
     const res = await fetch('/api/config');
     const data = await res.json();
     esp32BaseUrl = data.esp32_base;
+    plateCamUrl  = data.plate_base;
   } catch (e) {
     console.error('Failed to load device config:', e);
   }
@@ -146,12 +151,21 @@ async function loadProfiles() {
     for (const p of profiles) {
       const initials = p.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
       const item = document.createElement('div');
-      item.className = 'profile-item';
+      item.className = 'profile-item profile-item-clickable';
+      item.title = 'Click to view samples';
+      item.onclick = (e) => {
+        // Don't trigger gallery when clicking the Delete button
+        if (e.target.closest('.btn-danger')) return;
+        openGallery(p.name);
+      };
       item.innerHTML = `
         <div class="profile-avatar">${initials}</div>
         <div class="profile-info">
           <div class="profile-name">${escHtml(p.name)}</div>
-          <div class="profile-meta">${p.photos} sample${p.photos !== 1 ? 's' : ''}${p.enrolled_at ? ' · ' + p.enrolled_at : ''}</div>
+          <div class="profile-meta">
+            &#x1F4F7; ${p.photos} sample${p.photos !== 1 ? 's' : ''}
+            ${p.enrolled_at ? ' &middot; ' + p.enrolled_at : ''}
+          </div>
         </div>
         <button class="btn btn-danger" onclick="deleteProfile('${escHtml(p.name)}', this)">Delete</button>
       `;
@@ -186,6 +200,66 @@ function escHtml(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+// -----------------------------------------------------------------
+// Photo gallery
+// -----------------------------------------------------------------
+let _galleryOpen = null;
+
+async function openGallery(name) {
+  if (_galleryOpen === name) { closeGallery(); return; }
+  _galleryOpen = name;
+
+  const card  = document.getElementById('galleryCard');
+  const title = document.getElementById('galleryTitle');
+  const grid  = document.getElementById('galleryGrid');
+  if (!card) return;
+
+  title.textContent = `Samples — ${name}`;
+  grid.innerHTML = '<p class="muted">Loading…</p>';
+  card.style.display = '';
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  try {
+    const res  = await fetch(`/api/profiles/${encodeURIComponent(name)}/photos`);
+    const data = await res.json();
+    if (!data.photos.length) {
+      grid.innerHTML = '<p class="muted">No photos stored yet for this person.<br>Enroll more samples to see them here.</p>';
+      return;
+    }
+    grid.innerHTML = data.photos.map((url, i) =>
+      `<div class="photo-thumb" onclick="viewPhoto('${escHtml(url)}', ${i+1}, ${data.photos.length})">
+         <img src="${escHtml(url)}" loading="lazy" alt="Sample ${i+1}" />
+         <span class="photo-num">${i+1}</span>
+       </div>`
+    ).join('');
+  } catch (e) {
+    grid.innerHTML = '<p class="muted" style="color:var(--danger)">Failed to load photos.</p>';
+  }
+}
+
+function closeGallery() {
+  _galleryOpen = null;
+  const card = document.getElementById('galleryCard');
+  if (card) card.style.display = 'none';
+}
+
+function viewPhoto(url, idx, total) {
+  const existing = document.getElementById('photoLightbox');
+  if (existing) existing.remove();
+
+  const lb = document.createElement('div');
+  lb.id = 'photoLightbox';
+  lb.className = 'lightbox';
+  lb.innerHTML = `
+    <div class="lightbox-backdrop" onclick="this.parentElement.remove()"></div>
+    <div class="lightbox-content">
+      <img src="${escHtml(url)}" alt="Sample ${idx}" />
+      <div class="lightbox-label">Sample ${idx} / ${total}</div>
+      <button class="lightbox-close" onclick="document.getElementById('photoLightbox').remove()">&#x2715;</button>
+    </div>`;
+  document.body.appendChild(lb);
 }
 
 // -----------------------------------------------------------------
@@ -342,6 +416,10 @@ function clearResult() {
 function pushHistory(entry) {
   identifyHistory.unshift({ ...entry, time: new Date().toLocaleTimeString() });
   if (identifyHistory.length > 8) identifyHistory.length = 8;
+  if (entry.status === 'recognized' && entry.name) {
+    _lastIdentifiedPerson = entry.name;
+    try { sessionStorage.setItem('lastIdentified', entry.name); } catch(_) {}
+  }
   renderHistory();
 }
 
@@ -357,4 +435,181 @@ function renderHistory() {
       : h.status === 'no_face' ? '<span class="muted">No face</span>' : '<span class="muted">Unknown</span>';
     return `<li class="history-item ${cls}"><span class="hi-name">${label}</span><span class="hi-time">${h.time}</span></li>`;
   }).join('');
+}
+
+// -----------------------------------------------------------------
+// Plate cam
+// -----------------------------------------------------------------
+let plateStreamActive = false;
+let plateFlashOn = false;
+
+function togglePlateStream() {
+  if (!plateCamUrl) { alert('Plate cam config not loaded yet.'); return; }
+
+  const streamImg   = document.getElementById('plateStreamImg');
+  const previewImg  = document.getElementById('platePrevImg');
+  const placeholder = document.getElementById('platePrevPlaceholder');
+  const btn         = document.getElementById('plateStreamBtn');
+
+  plateStreamActive = !plateStreamActive;
+
+  if (plateStreamActive) {
+    if (previewImg)  previewImg.style.display  = 'none';
+    if (placeholder) placeholder.style.display = 'none';
+    streamImg.src           = plateCamUrl + '/stream';
+    streamImg.style.display = 'block';
+    btn.innerHTML = '&#x23F9; Stop Stream';
+    btn.classList.replace('btn-secondary', 'btn-primary');
+  } else {
+    streamImg.src           = '';
+    streamImg.style.display = 'none';
+    const hasSnap = previewImg && previewImg.src && !previewImg.src.endsWith(window.location.href);
+    if (hasSnap) {
+      previewImg.style.display = 'block';
+    } else if (placeholder) {
+      placeholder.style.display = '';
+    }
+    btn.innerHTML = '&#x1F4E1; Live Stream';
+    btn.classList.replace('btn-primary', 'btn-secondary');
+  }
+}
+
+async function togglePlateFlash() {
+  const btn = document.getElementById('plateFlashBtn');
+  setLoading(btn, true);
+  try {
+    const res  = await fetch('/api/plate/flash', { method: 'POST' });
+    const data = await res.json();
+    plateFlashOn = data.flash === 'on';
+    btn.innerHTML = plateFlashOn ? '&#x1F4A1; Flash ON' : '&#x1F526; Flash';
+    btn._origHTML = btn.innerHTML;
+    if (plateFlashOn) {
+      btn.classList.replace('btn-ghost', 'btn-secondary');
+    } else {
+      btn.classList.replace('btn-secondary', 'btn-ghost');
+    }
+  } catch (e) {
+    alert('Flash control failed: ' + e.message);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function plateSnapshot() {
+  const btn         = document.getElementById('plateSnapBtn');
+  const previewImg  = document.getElementById('platePrevImg');
+  const placeholder = document.getElementById('platePrevPlaceholder');
+
+  setLoading(btn, true);
+  try {
+    const res = await fetch('/api/plate/preview');
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Capture failed');
+    const data = await res.json();
+    previewImg.src = data.image;
+    previewImg.style.display = 'block';
+    if (placeholder) placeholder.style.display = 'none';
+    if (plateStreamActive) togglePlateStream();
+  } catch (err) {
+    alert('Snapshot failed: ' + err.message);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function plateCapture() {
+  const btn       = document.getElementById('plateCaptureBtn');
+  const statusBox = document.getElementById('plateCaptureStatus');
+  const personIn  = document.getElementById('platePersonInput');
+  const person    = personIn ? personIn.value.trim() : '';
+
+  setLoading(btn, true);
+  setStatus(statusBox, 'loading', '⏳ Capturing plate…');
+
+  try {
+    const fd = new FormData();
+    if (person) fd.append('person', person);
+    const res  = await fetch('/api/plate/capture', { method: 'POST', body: fd });
+    const data = await res.json();
+
+    if (!res.ok) {
+      setStatus(statusBox, 'error', '✗ ' + (data.detail || 'Capture failed'));
+    } else {
+      const who = data.person ? `"${escHtml(data.person)}"` : 'anonymous';
+      setStatus(statusBox, 'success', `✓ Event logged for ${who}`);
+      await loadPlateEvents();
+    }
+  } catch (err) {
+    setStatus(statusBox, 'error', '✗ Network error: ' + err.message);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+function autofillLastIdentified() {
+  const inp = document.getElementById('platePersonInput');
+  if (!inp) return;
+  let name = null;
+  try { name = sessionStorage.getItem('lastIdentified'); } catch(_) {}
+  name = name || _lastIdentifiedPerson;
+  if (name) {
+    inp.value = name;
+    inp.dispatchEvent(new Event('input'));
+  } else {
+    alert('No identification result yet. Run identification first.');
+  }
+}
+
+async function loadPlateEvents() {
+  const list = document.getElementById('plateEventList');
+  if (!list) return;
+
+  list.innerHTML = '<p class="muted">Loading…</p>';
+  try {
+    const res  = await fetch('/api/plate/events?limit=50');
+    const data = await res.json();
+    const events = data.events || [];
+
+    if (events.length === 0) {
+      list.innerHTML = '<p class="muted">No events logged yet.</p>';
+      return;
+    }
+
+    list.innerHTML = events.map(ev => {
+      const personLabel = ev.person
+        ? `<span class="event-person">${escHtml(ev.person)}</span>`
+        : `<span class="event-person unknown">Anonymous</span>`;
+      const thumb = ev.photo
+        ? `<img class="event-thumb" src="${escHtml(ev.photo)}" loading="lazy" alt="plate" onclick="viewPhoto('${escHtml(ev.photo)}',1,1)" />`
+        : `<div class="event-thumb event-thumb-empty">&#x1F37D;</div>`;
+      const ts = ev.timestamp ? new Date(ev.timestamp).toLocaleString() : '';
+      return `
+        <div class="event-item" id="ev-${escHtml(ev.id)}">
+          ${thumb}
+          <div class="event-info">
+            ${personLabel}
+            <div class="event-time">${escHtml(ts)}</div>
+          </div>
+          <button class="btn btn-danger btn-sm" onclick="deletePlateEvent('${escHtml(ev.id)}',this)">&#x2715;</button>
+        </div>`;
+    }).join('');
+  } catch (err) {
+    list.innerHTML = '<p class="muted" style="color:var(--danger)">Failed to load events.</p>';
+  }
+}
+
+async function deletePlateEvent(id, btn) {
+  setLoading(btn, true);
+  try {
+    const res = await fetch(`/api/plate/events/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (res.ok) {
+      await loadPlateEvents();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      alert(data.detail || 'Failed to delete event.');
+      setLoading(btn, false);
+    }
+  } catch {
+    alert('Network error.');
+    setLoading(btn, false);
+  }
 }

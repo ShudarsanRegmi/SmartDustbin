@@ -13,6 +13,7 @@
       <a href="/">Dashboard</a>
       <a href="/enroll" class="active">Enroll</a>
       <a href="/identify">Identify</a>
+      <a href="/plate">Plate Cam</a>
     </div>
   </nav>
 
@@ -77,6 +78,15 @@
           <p class="muted">Loading…</p>
         </div>
         <button class="btn btn-ghost full-width mt-sm" onclick="loadProfiles()">&#x21BB; Refresh</button>
+
+        <!-- inline gallery for enroll page -->
+        <div id="galleryCard" style="display:none;" class="mt-sm">
+          <div class="card-header-row">
+            <span class="card-title" id="galleryTitle">Samples</span>
+            <button class="btn btn-ghost sm" onclick="closeGallery()">&#x2715;</button>
+          </div>
+          <div id="galleryGrid" class="photo-grid"></div>
+        </div>
       </div>
     </div>
   </main>

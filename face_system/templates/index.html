@@ -13,6 +13,7 @@
       <a href="/" class="active">Dashboard</a>
       <a href="/enroll">Enroll</a>
       <a href="/identify">Identify</a>
+      <a href="/plate">Plate Cam</a>
     </div>
   </nav>
 
@@ -63,6 +64,15 @@
       <div id="profileList" class="profile-list">
         <p class="muted">Loading…</p>
       </div>
+    </div>
+
+    <!-- Per-person photo gallery (populated when a profile row is expanded) -->
+    <div class="card mt-md" id="galleryCard" style="display:none;">
+      <div class="card-header-row">
+        <h2 class="card-title" id="galleryTitle">Samples</h2>
+        <button class="btn btn-ghost sm" onclick="closeGallery()">&#x2715; Close</button>
+      </div>
+      <div id="galleryGrid" class="photo-grid"></div>
     </div>
   </main>
 

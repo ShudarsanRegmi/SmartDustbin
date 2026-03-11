@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Plate Cam – FaceID Dustbin</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <nav class="navbar">
+    <a class="brand" href="/">&#x1F9E0; FaceID</a>
+    <div class="nav-links">
+      <a href="/">Dashboard</a>
+      <a href="/enroll">Enroll</a>
+      <a href="/identify">Identify</a>
+      <a href="/plate" class="active">Plate Cam</a>
+    </div>
+  </nav>
+
+  <main class="page-container">
+    <div class="page-header">
+      <h1>&#x1F37D;&#xFE0F; Plate Camera</h1>
+      <p class="subtitle">Monitor food waste — capture plate photos, link them to identified students, and review history.</p>
+    </div>
+
+    <div class="plate-layout">
+
+      <!-- ── Left column: camera + capture ── -->
+      <div class="plate-left">
+
+        <!-- Camera card -->
+        <div class="card">
+          <h2 class="card-title">&#x1F4F7; Plate Camera</h2>
+
+          <div class="preview-box large" id="platePrevBox">
+            <div class="preview-placeholder" id="platePrevPlaceholder">
+              <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="32" cy="32" r="22" stroke="currentColor" stroke-width="3"/>
+                <circle cx="32" cy="32" r="12" stroke="currentColor" stroke-width="2" stroke-dasharray="4 3"/>
+                <path d="M22 44 Q32 36 42 44" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+              </svg>
+              <span>Plate preview will appear here</span>
+            </div>
+            <img id="platePrevImg" src="" alt="Plate preview" style="display:none;" />
+            <img id="plateStreamImg" alt="Live Stream" style="display:none; width:100%; height:100%; object-fit:cover;" />
+          </div>
+
+          <div class="cam-controls mt-xs">
+            <button class="btn btn-secondary" id="plateStreamBtn" onclick="togglePlateStream()">
+              &#x1F4E1; Live Stream
+            </button>
+            <button class="btn btn-secondary" id="plateSnapBtn" onclick="plateSnapshot()">
+              &#x1F4F8; Snapshot
+            </button>
+            <button class="btn btn-ghost" id="plateFlashBtn" onclick="togglePlateFlash()">
+              &#x1F526; Flash
+            </button>
+          </div>
+        </div>
+
+        <!-- Capture & link event card -->
+        <div class="card mt-sm">
+          <h2 class="card-title">&#x1F4BE; Log Waste Event</h2>
+          <p class="muted small" style="margin-bottom:.85rem;">
+            Optionally link this plate photo to a person (from the Identify page) then press Capture to save the event.
+          </p>
+
+          <label class="field-label" for="platePersonInput">Linked Person <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+          <div style="display:flex;gap:.5rem;align-items:center;">
+            <input id="platePersonInput" class="text-input" type="text" placeholder="e.g. Shud" autocomplete="off" />
+            <button class="btn btn-ghost sm" onclick="autofillLastIdentified()" title="Fill from last Identify result">&#x21BA; Auto</button>
+          </div>
+
+          <button class="btn btn-primary full-width mt-sm" id="plateCaptureBtn" onclick="plateCapture()">
+            <span class="btn-icon">&#x1F4E6;</span> Capture &amp; Log Event
+          </button>
+
+          <div id="plateCaptureStatus" class="status-box" style="display:none;"></div>
+        </div>
+
+      </div>
+
+      <!-- ── Right column: event log ── -->
+      <div class="plate-right">
+        <div class="card" style="height:100%;">
+          <div class="card-header-row">
+            <h2 class="card-title">&#x1F4CB; Waste Event Log</h2>
+            <button class="btn btn-ghost sm" onclick="loadPlateEvents()">&#x21BB; Refresh</button>
+          </div>
+
+          <div id="plateEventList" class="event-list">
+            <p class="muted">Loading…</p>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /plate-layout -->
+  </main>
+
+  <!-- Lightbox (shared with rest of app) -->
+
+  <script src="/static/app.js"></script>
+  <script>
+    loadConfig();
+    loadPlateEvents();
+  </script>
+</body>
+</html>
