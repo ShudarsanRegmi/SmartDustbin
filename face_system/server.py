@@ -14,7 +14,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from recognizer import extract_embedding, add_embedding, recognize_face, remove_person, list_persons
+from recognizer import extract_embedding, add_embedding, recognize_face, remove_person, list_persons, THRESHOLD
+import shutil
 
 ESP32_URL = os.getenv("ESP32_URL", "http://11.12.20.131")
 PROFILES_FILE = "face_db/profiles.json"
@@ -179,6 +180,48 @@ def api_enroll(name: str = Form(...)):
     }
 
 
+@app.delete("/api/clear_db")
+def api_clear_db():
+    """Wipe all stored embeddings and profiles. Required after normalisation fix."""
+    from recognizer import embeddings, labels, index
+    import faiss as _faiss
+    embeddings.clear()
+    labels.clear()
+    # rebuild index in-place
+    new_index = _faiss.IndexFlatL2(512)
+    import recognizer as _rec
+    _rec.index = new_index
+    if os.path.exists("face_db/embeddings.pkl"):
+        os.remove("face_db/embeddings.pkl")
+    if os.path.exists(PROFILES_FILE):
+        os.remove(PROFILES_FILE)
+    return {"status": "cleared"}
+
+
+# ---------------------------------------------------------------------------
+# API – debug: show raw match scores without making a recognition decision
+# ---------------------------------------------------------------------------
+
+@app.get("/api/debug_scores")
+def api_debug_scores():
+    """Capture, extract embedding, and return raw L2 scores for all enrolled people.
+    Useful for tuning the threshold and diagnosing recognition failures."""
+    img, raw = fetch_esp32_image()
+    emb = extract_embedding(img)
+    encoded = base64.b64encode(raw).decode()
+
+    if emb is None:
+        return {"status": "no_face", "image": f"data:image/jpeg;base64,{encoded}"}
+
+    _name, _score, all_scores = recognize_face(emb)
+    return {
+        "threshold": THRESHOLD,
+        "scores": {k: round(v, 4) for k, v in all_scores.items()},
+        "would_match": _name if _name != "unknown" else None,
+        "image": f"data:image/jpeg;base64,{encoded}",
+    }
+
+
 # ---------------------------------------------------------------------------
 # API – identify
 # ---------------------------------------------------------------------------
@@ -198,13 +241,12 @@ def api_identify():
             "image": f"data:image/jpeg;base64,{encoded}",
         }
 
-    name, score = recognize_face(emb)
-    # score from faiss L2: lower is better; convert to 0-100 confidence
+    name, score, all_scores = recognize_face(emb)
+    # Confidence: 100% at L2=0, 0% at L2=THRESHOLD
     if name == "unknown":
         confidence = None
     else:
-        # clamp: score=0 → 100%, score=1 → 0%
-        confidence = round(max(0.0, (1.0 - score)) * 100, 1)
+        confidence = round(max(0.0, (THRESHOLD - score) / THRESHOLD) * 100, 1)
 
     return {
         "status": "recognized" if name != "unknown" else "unknown",
