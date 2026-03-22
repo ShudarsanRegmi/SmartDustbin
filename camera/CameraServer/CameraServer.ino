@@ -9,7 +9,8 @@ const char* password = "amrita@321";
 httpd_handle_t server = NULL;
 
 // AI Thinker camera pins
-#define PWDN_GPIO_NUM     32
+#define PWDN_GPIO_NUM     32 
+
 #define RESET_GPIO_NUM    -1
 #define XCLK_GPIO_NUM      0
 #define SIOD_GPIO_NUM     26
