@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Form, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -10,11 +10,14 @@ import base64
 import os
 import json
 import time
+import random
+from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
 from recognizer import extract_embedding, add_embedding, recognize_face, remove_person, list_persons, THRESHOLD
+from database import record_pipeline_event, list_pipeline_events, summarize_pipeline_events
 import shutil
 
 # Defaults only — actual values always come from .env via os.getenv() at call time
@@ -23,6 +26,7 @@ _DEFAULT_PLATE_CAM_URL  = "http://11.12.20.132"
 PROFILES_FILE  = "face_db/profiles.json"
 PHOTOS_DIR     = "face_db/photos"
 PLATE_EVENTS_FILE = "face_db/plate_events.json"
+PIPELINE_PLATES_DIR = "face_db/pipeline_plates"
 
 app = FastAPI(title="ESP32 Face Recognition")
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -95,6 +99,11 @@ def identify_page(request: Request):
 @app.get("/plate", response_class=HTMLResponse)
 def plate_page(request: Request):
     return templates.TemplateResponse("plate.html", {"request": request})
+
+
+@app.get("/pipeline", response_class=HTMLResponse)
+def pipeline_page(request: Request):
+    return templates.TemplateResponse("pipeline.html", {"request": request})
 
 
 # ---------------------------------------------------------------------------
@@ -310,6 +319,167 @@ def api_identify():
         "confidence": confidence,
         "image": f"data:image/jpeg;base64,{encoded}",
     }
+
+
+def _send_servo_state(state: str):
+    """Send logical servo state to ESP32 endpoint."""
+    try:
+        r = _session.get(f"{_esp32_base()}/servo", params={"state": state}, timeout=(4, 8))
+        r.raise_for_status()
+        return True, r.text
+    except requests.RequestException as e:
+        return False, str(e)
+
+
+def _run_reversed_servo_cycle(duration_seconds: int = 4) -> dict:
+    """
+    Hardware logic is reversed:
+    - state=off means physical ON
+    - state=on means physical OFF
+    """
+    activate_state = "off"
+    deactivate_state = "on"
+
+    ok_on, detail_on = _send_servo_state(activate_state)
+    if not ok_on:
+        return {
+            "status": "error",
+            "activate_state": activate_state,
+            "deactivate_state": deactivate_state,
+            "detail": f"Servo activate failed: {detail_on}",
+        }
+
+    time.sleep(duration_seconds)
+
+    ok_off, detail_off = _send_servo_state(deactivate_state)
+    if not ok_off:
+        return {
+            "status": "error",
+            "activate_state": activate_state,
+            "deactivate_state": deactivate_state,
+            "detail": f"Servo deactivate failed: {detail_off}",
+        }
+
+    return {
+        "status": "cycled",
+        "activate_state": activate_state,
+        "deactivate_state": deactivate_state,
+        "duration_seconds": duration_seconds,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Pipeline – API
+# ---------------------------------------------------------------------------
+
+@app.post("/api/pipeline/start")
+def api_pipeline_start():
+    """Capture face and identify person as the first step in the pipeline."""
+    img, raw = _fetch_image(f"{_esp32_base()}/capture")
+    emb = extract_embedding(img)
+    encoded = base64.b64encode(raw).decode()
+
+    if emb is None:
+        return {
+            "status": "no_face",
+            "person": None,
+            "score": None,
+            "confidence": None,
+            "message": "No face detected. Please face the camera and try again.",
+            "image": f"data:image/jpeg;base64,{encoded}",
+        }
+
+    name, score, _all_scores = recognize_face(emb)
+    if name == "unknown":
+        return {
+            "status": "unknown",
+            "person": None,
+            "score": round(float(score), 4),
+            "confidence": None,
+            "message": "Face not recognized. Please enroll first.",
+            "image": f"data:image/jpeg;base64,{encoded}",
+        }
+
+    confidence = round(max(0.0, (THRESHOLD - score) / THRESHOLD) * 100, 1)
+    return {
+        "status": "recognized",
+        "person": name,
+        "score": round(float(score), 4),
+        "confidence": confidence,
+        "message": f"Face recognized: {name}",
+        "image": f"data:image/jpeg;base64,{encoded}",
+    }
+
+
+@app.post("/api/pipeline/upload_plate")
+def api_pipeline_upload_plate(
+    plate_photo: UploadFile = File(...),
+    person: str = Form(...),
+    face_score: Optional[float] = Form(default=None),
+):
+    """
+    Upload a plate photo, classify waste (temporary random class 1-4),
+    store event for analytics, and run servo for 4 seconds using reversed logic.
+    """
+    person = person.strip()
+    if not person:
+        raise HTTPException(status_code=400, detail="Face must be recognized first. Please run start pipeline.")
+
+    raw = plate_photo.file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Uploaded plate photo is empty.")
+
+    img = np.frombuffer(raw, np.uint8)
+    img = cv2.imdecode(img, cv2.IMREAD_COLOR)
+    if img is None:
+        raise HTTPException(status_code=400, detail="Invalid image file uploaded.")
+
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    ms = int(time.time() * 1000) % 1000
+    filename = f"{ts}_{ms:03d}.jpg"
+    os.makedirs(PIPELINE_PLATES_DIR, exist_ok=True)
+    filepath = os.path.join(PIPELINE_PLATES_DIR, filename)
+    with open(filepath, "wb") as fh:
+        fh.write(raw)
+
+    waste_category = random.randint(1, 4)
+    servo = _run_reversed_servo_cycle(duration_seconds=4)
+
+    event = record_pipeline_event({
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "person": person,
+        "face_score": round(float(face_score), 4) if face_score is not None else None,
+        "plate_photo": f"/api/pipeline/plate_photo/{filename}",
+        "waste_category": waste_category,
+        "servo": servo,
+    })
+
+    return {
+        "status": "completed",
+        "event": event,
+        "message": "Pipeline completed and saved for analytics.",
+    }
+
+
+@app.get("/api/pipeline/plate_photo/{filename}")
+def api_pipeline_plate_photo(filename: str):
+    if "/" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    from fastapi.responses import FileResponse
+    path = os.path.join(PIPELINE_PLATES_DIR, filename)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Photo not found")
+    return FileResponse(path, media_type="image/jpeg")
+
+
+@app.get("/api/pipeline/events")
+def api_pipeline_events(limit: int = 50):
+    return {"events": list_pipeline_events(limit=limit)}
+
+
+@app.get("/api/pipeline/summary")
+def api_pipeline_summary():
+    return summarize_pipeline_events()
 
 
 # ---------------------------------------------------------------------------

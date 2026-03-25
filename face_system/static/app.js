@@ -613,3 +613,180 @@ async function deletePlateEvent(id, btn) {
     setLoading(btn, false);
   }
 }
+
+// -----------------------------------------------------------------
+// Pipeline page
+// -----------------------------------------------------------------
+let pipelineRecognizedPerson = null;
+let pipelineFaceScore = null;
+
+async function pipelineStart() {
+  const btn = document.getElementById('pipelineStartBtn');
+  const statusBox = document.getElementById('pipelineFaceStatus');
+  const previewImg = document.getElementById('pipelineFaceImg');
+  const placeholder = document.getElementById('pipelineFacePlaceholder');
+  const personWrap = document.getElementById('pipelinePersonWrap');
+  const personName = document.getElementById('pipelinePersonName');
+  const uploadBtn = document.getElementById('pipelineUploadBtn');
+
+  setLoading(btn, true);
+  setStatus(statusBox, 'loading', 'Capturing face and running identification...');
+
+  try {
+    const res = await fetch('/api/pipeline/start', { method: 'POST' });
+    const data = await res.json();
+
+    if (!res.ok) {
+      setStatus(statusBox, 'error', 'Pipeline start failed: ' + (data.detail || 'Server error'));
+      pipelineRecognizedPerson = null;
+      pipelineFaceScore = null;
+      if (uploadBtn) uploadBtn.disabled = true;
+      if (personWrap) personWrap.style.display = 'none';
+      return;
+    }
+
+    if (data.image && previewImg) {
+      previewImg.src = data.image;
+      previewImg.style.display = 'block';
+      if (placeholder) placeholder.style.display = 'none';
+    }
+
+    if (data.status === 'recognized') {
+      pipelineRecognizedPerson = data.person;
+      pipelineFaceScore = data.score;
+      setStatus(statusBox, 'success', data.message + ' You can now upload plate image.');
+      if (personName) personName.textContent = 'Recognized: ' + data.person;
+      if (personWrap) personWrap.style.display = '';
+      if (uploadBtn) uploadBtn.disabled = false;
+    } else if (data.status === 'unknown') {
+      pipelineRecognizedPerson = null;
+      pipelineFaceScore = data.score;
+      setStatus(statusBox, 'error', 'Face not recognized. Please enroll first.');
+      if (personWrap) personWrap.style.display = 'none';
+      if (uploadBtn) uploadBtn.disabled = true;
+    } else {
+      pipelineRecognizedPerson = null;
+      pipelineFaceScore = null;
+      setStatus(statusBox, 'error', data.message || 'No face detected. Please try again.');
+      if (personWrap) personWrap.style.display = 'none';
+      if (uploadBtn) uploadBtn.disabled = true;
+    }
+  } catch (err) {
+    setStatus(statusBox, 'error', 'Network error: ' + err.message);
+    pipelineRecognizedPerson = null;
+    pipelineFaceScore = null;
+    if (uploadBtn) uploadBtn.disabled = true;
+    if (personWrap) personWrap.style.display = 'none';
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function pipelineUploadPlate() {
+  const btn = document.getElementById('pipelineUploadBtn');
+  const statusBox = document.getElementById('pipelinePlateStatus');
+  const fileInput = document.getElementById('pipelinePlateFile');
+
+  if (!pipelineRecognizedPerson) {
+    setStatus(statusBox, 'error', 'Run face recognition first.');
+    return;
+  }
+  if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+    setStatus(statusBox, 'error', 'Please upload a plate image.');
+    return;
+  }
+
+  setLoading(btn, true);
+  setStatus(statusBox, 'loading', 'Uploading plate image, classifying waste, and controlling servo...');
+
+  try {
+    const fd = new FormData();
+    fd.append('plate_photo', fileInput.files[0]);
+    fd.append('person', pipelineRecognizedPerson);
+    if (pipelineFaceScore !== null && pipelineFaceScore !== undefined) {
+      fd.append('face_score', String(pipelineFaceScore));
+    }
+
+    const res = await fetch('/api/pipeline/upload_plate', { method: 'POST', body: fd });
+    const data = await res.json();
+
+    if (!res.ok) {
+      setStatus(statusBox, 'error', data.detail || 'Pipeline upload failed.');
+      return;
+    }
+
+    const event = data.event || {};
+    const cat = event.waste_category;
+    const servoStatus = event.servo && event.servo.status ? event.servo.status : 'unknown';
+    setStatus(statusBox, 'success', 'Saved event. Waste category: ' + cat + '. Servo: ' + servoStatus + '.');
+    await loadPipelineAnalytics();
+  } catch (err) {
+    setStatus(statusBox, 'error', 'Network error: ' + err.message);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function loadPipelineAnalytics() {
+  const stats = document.getElementById('pipelineStats');
+  const list = document.getElementById('pipelineEventsList');
+  if (!stats || !list) return;
+
+  stats.innerHTML = '<p class="muted">Loading...</p>';
+  list.innerHTML = '<p class="muted">Loading...</p>';
+
+  try {
+    const [sumRes, eventsRes] = await Promise.all([
+      fetch('/api/pipeline/summary'),
+      fetch('/api/pipeline/events?limit=25'),
+    ]);
+    const summary = await sumRes.json();
+    const eventsData = await eventsRes.json();
+    const counts = summary.category_counts || {};
+
+    stats.innerHTML = `
+      <div class="stat-card"><div class="stat-value">${summary.total_events || 0}</div><div class="stat-label">Total events</div></div>
+      <div class="stat-card"><div class="stat-value">${counts['1'] || 0}</div><div class="stat-label">Category 1 (max waste)</div></div>
+      <div class="stat-card"><div class="stat-value">${counts['2'] || 0}</div><div class="stat-label">Category 2</div></div>
+      <div class="stat-card"><div class="stat-value">${counts['3'] || 0}</div><div class="stat-label">Category 3</div></div>
+      <div class="stat-card"><div class="stat-value">${counts['4'] || 0}</div><div class="stat-label">Category 4 (minimal)</div></div>
+    `;
+
+    const events = eventsData.events || [];
+    if (events.length === 0) {
+      list.innerHTML = '<p class="muted">No pipeline events yet.</p>';
+      return;
+    }
+
+    list.innerHTML = events.map(ev => {
+      const who = ev.person ? escHtml(ev.person) : 'Unknown';
+      const when = ev.timestamp ? escHtml(ev.timestamp) : '';
+      const cat = ev.waste_category || '-';
+      const servo = ev.servo && ev.servo.status ? escHtml(ev.servo.status) : 'unknown';
+      const thumb = ev.plate_photo
+        ? `<img class="event-thumb" src="${escHtml(ev.plate_photo)}" loading="lazy" alt="plate" onclick="viewPhoto('${escHtml(ev.plate_photo)}',1,1)" />`
+        : '<div class="event-thumb event-thumb-empty">?</div>';
+
+      return `
+        <div class="event-item">
+          ${thumb}
+          <div class="event-info">
+            <div class="event-person">${who}</div>
+            <div class="event-time">${when}</div>
+            <div class="event-time">Category: ${cat} | Servo: ${servo}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    stats.innerHTML = '<p class="muted" style="color:var(--danger)">Failed to load summary.</p>';
+    list.innerHTML = '<p class="muted" style="color:var(--danger)">Failed to load events.</p>';
+  }
+}
+
+// Explicitly expose pipeline hooks for pages that bind handlers dynamically.
+if (typeof window !== 'undefined') {
+  window.pipelineStart = pipelineStart;
+  window.pipelineUploadPlate = pipelineUploadPlate;
+  window.loadPipelineAnalytics = loadPipelineAnalytics;
+}

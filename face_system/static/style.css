@@ -819,3 +819,52 @@ body {
   font-size: .78rem;
   line-height: 1.4;
 }
+
+/* =================================================================
+   Pipeline page
+   ================================================================= */
+.pipeline-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+@media (max-width: 860px) {
+  .pipeline-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pipeline-person {
+  margin-top: 0.8rem;
+}
+
+.pipeline-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--success);
+  border: 1px solid rgba(34,197,94,0.4);
+  background: rgba(34,197,94,0.12);
+}
+
+.pipeline-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: 0.7rem;
+}
+
+@media (max-width: 900px) {
+  .pipeline-stats {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .pipeline-stats {
+    grid-template-columns: 1fr;
+  }
+}
