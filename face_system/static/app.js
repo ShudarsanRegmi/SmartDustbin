@@ -620,6 +620,92 @@ async function deletePlateEvent(id, btn) {
 let pipelineRecognizedPerson = null;
 let pipelineFaceScore = null;
 
+function pipelineSwitchTab(tab) {
+  const runTab = document.getElementById('pipelineRunTab');
+  const analyticsTab = document.getElementById('pipelineAnalyticsTab');
+  const runBtn = document.getElementById('pipelineTabRunBtn');
+  const analyticsBtn = document.getElementById('pipelineTabAnalyticsBtn');
+
+  if (!runTab || !analyticsTab || !runBtn || !analyticsBtn) return;
+
+  const showRun = tab === 'run';
+  runTab.style.display = showRun ? '' : 'none';
+  analyticsTab.style.display = showRun ? 'none' : '';
+  runBtn.classList.toggle('active', showRun);
+  analyticsBtn.classList.toggle('active', !showRun);
+
+  if (!showRun) {
+    loadPipelineAnalytics();
+  }
+}
+
+function pipelineHandlePlateSelection() {
+  const fileInput = document.getElementById('pipelinePlateFile');
+  const img = document.getElementById('pipelinePlateImg');
+  const placeholder = document.getElementById('pipelinePlatePlaceholder');
+  if (!fileInput || !img || !placeholder) return;
+
+  const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+  if (!file) {
+    img.src = '';
+    img.style.display = 'none';
+    placeholder.style.display = '';
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = function (e) {
+    img.src = e.target && e.target.result ? String(e.target.result) : '';
+    img.style.display = 'block';
+    placeholder.style.display = 'none';
+  };
+  reader.readAsDataURL(file);
+}
+
+function pipelineResetUi() {
+  pipelineRecognizedPerson = null;
+  pipelineFaceScore = null;
+
+  const uploadBtn = document.getElementById('pipelineUploadBtn');
+  const personWrap = document.getElementById('pipelinePersonWrap');
+  const faceStatus = document.getElementById('pipelineFaceStatus');
+  const plateStatus = document.getElementById('pipelinePlateStatus');
+  const uploadHint = document.getElementById('pipelineUploadHint');
+  const readyNote = document.getElementById('pipelineReadyNote');
+
+  const faceImg = document.getElementById('pipelineFaceImg');
+  const facePlaceholder = document.getElementById('pipelineFacePlaceholder');
+  const plateImg = document.getElementById('pipelinePlateImg');
+  const platePlaceholder = document.getElementById('pipelinePlatePlaceholder');
+  const plateFile = document.getElementById('pipelinePlateFile');
+
+  if (uploadBtn) uploadBtn.disabled = true;
+  if (personWrap) personWrap.style.display = 'none';
+  if (faceStatus) faceStatus.style.display = 'none';
+  if (plateStatus) plateStatus.style.display = 'none';
+  if (readyNote) readyNote.style.display = 'none';
+
+  if (uploadHint) {
+    uploadHint.textContent = 'Please recognize a member first. Upload will unlock automatically.';
+  }
+
+  if (faceImg) {
+    faceImg.src = '';
+    faceImg.style.display = 'none';
+  }
+  if (facePlaceholder) facePlaceholder.style.display = '';
+
+  if (plateImg) {
+    plateImg.src = '';
+    plateImg.style.display = 'none';
+  }
+  if (platePlaceholder) platePlaceholder.style.display = '';
+
+  if (plateFile) {
+    plateFile.value = '';
+  }
+}
+
 async function pipelineStart() {
   const btn = document.getElementById('pipelineStartBtn');
   const statusBox = document.getElementById('pipelineFaceStatus');
@@ -628,9 +714,12 @@ async function pipelineStart() {
   const personWrap = document.getElementById('pipelinePersonWrap');
   const personName = document.getElementById('pipelinePersonName');
   const uploadBtn = document.getElementById('pipelineUploadBtn');
+  const uploadHint = document.getElementById('pipelineUploadHint');
+  const readyNote = document.getElementById('pipelineReadyNote');
 
   setLoading(btn, true);
   setStatus(statusBox, 'loading', 'Capturing face and running identification...');
+  if (readyNote) readyNote.style.display = 'none';
 
   try {
     const res = await fetch('/api/pipeline/start', { method: 'POST' });
@@ -654,22 +743,31 @@ async function pipelineStart() {
     if (data.status === 'recognized') {
       pipelineRecognizedPerson = data.person;
       pipelineFaceScore = data.score;
-      setStatus(statusBox, 'success', data.message + ' You can now upload plate image.');
+      setStatus(statusBox, 'success', data.message + ' Please upload plate image to continue.');
       if (personName) personName.textContent = 'Recognized: ' + data.person;
       if (personWrap) personWrap.style.display = '';
       if (uploadBtn) uploadBtn.disabled = false;
+      if (uploadHint) {
+        uploadHint.textContent = 'Member recognized. Upload the plate image now.';
+      }
     } else if (data.status === 'unknown') {
       pipelineRecognizedPerson = null;
       pipelineFaceScore = data.score;
       setStatus(statusBox, 'error', 'Face not recognized. Please enroll first.');
       if (personWrap) personWrap.style.display = 'none';
       if (uploadBtn) uploadBtn.disabled = true;
+      if (uploadHint) {
+        uploadHint.textContent = 'Recognition failed. Enroll this member, then retry.';
+      }
     } else {
       pipelineRecognizedPerson = null;
       pipelineFaceScore = null;
       setStatus(statusBox, 'error', data.message || 'No face detected. Please try again.');
       if (personWrap) personWrap.style.display = 'none';
       if (uploadBtn) uploadBtn.disabled = true;
+      if (uploadHint) {
+        uploadHint.textContent = 'No face detected. Start again and ensure face is visible.';
+      }
     }
   } catch (err) {
     setStatus(statusBox, 'error', 'Network error: ' + err.message);
@@ -677,6 +775,9 @@ async function pipelineStart() {
     pipelineFaceScore = null;
     if (uploadBtn) uploadBtn.disabled = true;
     if (personWrap) personWrap.style.display = 'none';
+    if (uploadHint) {
+      uploadHint.textContent = 'Connection issue. Retry face capture.';
+    }
   } finally {
     setLoading(btn, false);
   }
@@ -686,6 +787,7 @@ async function pipelineUploadPlate() {
   const btn = document.getElementById('pipelineUploadBtn');
   const statusBox = document.getElementById('pipelinePlateStatus');
   const fileInput = document.getElementById('pipelinePlateFile');
+  const readyNote = document.getElementById('pipelineReadyNote');
 
   if (!pipelineRecognizedPerson) {
     setStatus(statusBox, 'error', 'Run face recognition first.');
@@ -720,6 +822,13 @@ async function pipelineUploadPlate() {
     const servoStatus = event.servo && event.servo.status ? event.servo.status : 'unknown';
     setStatus(statusBox, 'success', 'Saved event. Waste category: ' + cat + '. Servo: ' + servoStatus + '.');
     await loadPipelineAnalytics();
+    if (readyNote) {
+      readyNote.style.display = '';
+    }
+    setTimeout(() => {
+      pipelineResetUi();
+      pipelineSwitchTab('run');
+    }, 2600);
   } catch (err) {
     setStatus(statusBox, 'error', 'Network error: ' + err.message);
   } finally {
@@ -789,4 +898,6 @@ if (typeof window !== 'undefined') {
   window.pipelineStart = pipelineStart;
   window.pipelineUploadPlate = pipelineUploadPlate;
   window.loadPipelineAnalytics = loadPipelineAnalytics;
+  window.pipelineSwitchTab = pipelineSwitchTab;
+  window.pipelineHandlePlateSelection = pipelineHandlePlateSelection;
 }

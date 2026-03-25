@@ -19,57 +19,86 @@
     </div>
   </nav>
 
-  <main class="page-container">
-    <div class="page-header">
-      <h1>Waste Pipeline</h1>
-      <p class="subtitle">Step 1: recognize face. Step 2: upload plate image. Step 3: classify waste (temporary random 1-4), save analytics, and trigger servo.</p>
+  <main class="page-container pipeline-page">
+    <div class="pipeline-hero">
+      <h1>Waste Pipeline Console</h1>
+      <p class="subtitle">Recognize member, upload plate photo, classify waste, and trigger servo flow in one run.</p>
+      <div class="pipeline-tabs" id="pipelineTabs">
+        <button class="pipeline-tab active" id="pipelineTabRunBtn" data-tab="run">Run Pipeline</button>
+        <button class="pipeline-tab" id="pipelineTabAnalyticsBtn" data-tab="analytics">Analytics</button>
+      </div>
     </div>
 
-    <div class="pipeline-layout">
-      <div class="card">
-        <h2 class="card-title">1) Face Recognition</h2>
-        <p class="muted small">Press start to capture from ESP32 `/capture` and identify the person.</p>
-
-        <div class="preview-box large" id="pipelineFacePreviewBox">
-          <div class="preview-placeholder" id="pipelineFacePlaceholder">
-            <span>Face capture preview appears here</span>
+    <section id="pipelineRunTab">
+      <div class="pipeline-layout pipeline-layout-compact">
+        <div class="card pipeline-step-card pipeline-step-face">
+          <div class="pipeline-step-head">
+            <span class="step-num">1</span>
+            <h2 class="card-title">Face Recognition</h2>
           </div>
-          <img id="pipelineFaceImg" src="" alt="Face capture" style="display:none;" />
+          <p class="muted small">Capture from ESP32 `/capture`, identify member, then continue to upload step.</p>
+
+          <div class="preview-box pipeline-preview-compact" id="pipelineFacePreviewBox">
+            <div class="preview-placeholder" id="pipelineFacePlaceholder">
+              <span>Face capture preview appears here</span>
+            </div>
+            <img id="pipelineFaceImg" src="" alt="Face capture" style="display:none;" />
+          </div>
+
+          <button class="btn btn-primary full-width" id="pipelineStartBtn">Start Pipeline</button>
+          <div id="pipelineFaceStatus" class="status-box" style="display:none;"></div>
+
+          <div class="pipeline-person" id="pipelinePersonWrap" style="display:none;">
+            <span class="pipeline-pill" id="pipelinePersonName">-</span>
+          </div>
         </div>
 
-        <button class="btn btn-primary full-width" id="pipelineStartBtn">Start Pipeline</button>
-        <div id="pipelineFaceStatus" class="status-box" style="display:none;"></div>
+        <div class="card pipeline-step-card pipeline-step-plate">
+          <div class="pipeline-step-head">
+            <span class="step-num">2</span>
+            <h2 class="card-title">Plate Upload + Classify</h2>
+          </div>
+          <p class="muted small">When a member is recognized, upload the plate image to complete the flow.</p>
 
-        <div class="pipeline-person" id="pipelinePersonWrap" style="display:none;">
-          <span class="pipeline-pill" id="pipelinePersonName">-</span>
+          <div class="pipeline-upload-hint" id="pipelineUploadHint">
+            Please recognize a member first. Upload will unlock automatically.
+          </div>
+
+          <label class="field-label" for="pipelinePlateFile">Plate Image</label>
+          <input id="pipelinePlateFile" class="text-input" type="file" accept="image/*" />
+
+          <div class="preview-box pipeline-preview-compact" id="pipelinePlatePreviewBox">
+            <div class="preview-placeholder" id="pipelinePlatePlaceholder">
+              <span>Uploaded plate image preview appears here</span>
+            </div>
+            <img id="pipelinePlateImg" src="" alt="Plate upload preview" style="display:none;" />
+          </div>
+
+          <button class="btn btn-secondary full-width mt-sm" id="pipelineUploadBtn" disabled>
+            Upload Plate and Complete Pipeline
+          </button>
+
+          <div id="pipelinePlateStatus" class="status-box" style="display:none;"></div>
         </div>
       </div>
 
-      <div class="card">
-        <h2 class="card-title">2) Plate Upload + Classification</h2>
-        <p class="muted small">Second camera upload fallback until `PLATE_CAM_URL` hardware is ready.</p>
-
-        <label class="field-label" for="pipelinePlateFile">Plate Image</label>
-        <input id="pipelinePlateFile" class="text-input" type="file" accept="image/*" />
-
-        <button class="btn btn-secondary full-width mt-sm" id="pipelineUploadBtn" disabled>
-          Upload Plate and Complete Pipeline
-        </button>
-
-        <div id="pipelinePlateStatus" class="status-box" style="display:none;"></div>
+      <div class="pipeline-ready-note" id="pipelineReadyNote" style="display:none;">
+        Pipeline completed. Resetting interface for next member...
       </div>
-    </div>
+    </section>
 
-    <div class="card mt-md">
-      <div class="card-header-row">
-        <h2 class="card-title">Pipeline Analytics Snapshot</h2>
-        <button class="btn btn-ghost sm" id="pipelineRefreshBtn">Refresh</button>
+    <section id="pipelineAnalyticsTab" style="display:none;">
+      <div class="card pipeline-analytics-card">
+        <div class="card-header-row">
+          <h2 class="card-title">Pipeline Analytics Snapshot</h2>
+          <button class="btn btn-ghost sm" id="pipelineRefreshBtn">Refresh</button>
+        </div>
+        <div class="pipeline-stats" id="pipelineStats"></div>
+        <div class="event-list mt-sm" id="pipelineEventsList">
+          <p class="muted">Loading...</p>
+        </div>
       </div>
-      <div class="pipeline-stats" id="pipelineStats"></div>
-      <div class="event-list mt-sm" id="pipelineEventsList">
-        <p class="muted">Loading...</p>
-      </div>
-    </div>
+    </section>
   </main>
 
   <script src="/static/app.js?v=20260325"></script>
@@ -82,6 +111,9 @@
       const startBtn = document.getElementById('pipelineStartBtn');
       const uploadBtn = document.getElementById('pipelineUploadBtn');
       const refreshBtn = document.getElementById('pipelineRefreshBtn');
+      const fileInput = document.getElementById('pipelinePlateFile');
+      const runTabBtn = document.getElementById('pipelineTabRunBtn');
+      const analyticsTabBtn = document.getElementById('pipelineTabAnalyticsBtn');
 
       if (startBtn && typeof window.pipelineStart === 'function') {
         startBtn.addEventListener('click', window.pipelineStart);
@@ -89,8 +121,17 @@
       if (uploadBtn && typeof window.pipelineUploadPlate === 'function') {
         uploadBtn.addEventListener('click', window.pipelineUploadPlate);
       }
+      if (fileInput && typeof window.pipelineHandlePlateSelection === 'function') {
+        fileInput.addEventListener('change', window.pipelineHandlePlateSelection);
+      }
       if (refreshBtn && typeof window.loadPipelineAnalytics === 'function') {
         refreshBtn.addEventListener('click', window.loadPipelineAnalytics);
+      }
+      if (runTabBtn && typeof window.pipelineSwitchTab === 'function') {
+        runTabBtn.addEventListener('click', function () { window.pipelineSwitchTab('run'); });
+      }
+      if (analyticsTabBtn && typeof window.pipelineSwitchTab === 'function') {
+        analyticsTabBtn.addEventListener('click', function () { window.pipelineSwitchTab('analytics'); });
       }
 
       if (typeof window.loadPipelineAnalytics === 'function') {
