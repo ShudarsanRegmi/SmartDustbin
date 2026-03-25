@@ -3,8 +3,8 @@
 #include <HTTPClient.h>
 
 // WIFI
-const char* ssid = "Amrita_CHN";
-const char* password = "amrita@321";
+const char* ssid = "SHUD";
+const char* password = "shud1234";
 
 // SERVER URL
 const char* serverUrl = "http://11.12.66.42:5000/upload";

@@ -2,15 +2,15 @@
 #include <WiFi.h>
 #include "esp_http_server.h"
 #include "esp_task_wdt.h"
+#include <ESP32Servo.h>
 
-const char* ssid = "Amrita_CHN";
-const char* password = "amrita@321";
+const char* ssid = "SHUD";
+const char* password = "shud1234";
 
 httpd_handle_t server = NULL;
 
 // AI Thinker camera pins
 #define PWDN_GPIO_NUM     32 
-
 #define RESET_GPIO_NUM    -1
 #define XCLK_GPIO_NUM      0
 #define SIOD_GPIO_NUM     26
@@ -29,12 +29,18 @@ httpd_handle_t server = NULL;
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
-#define FLASH_GPIO_NUM     4   // AI Thinker onboard flash LED
+#define FLASH_GPIO_NUM     4
+#define SERVO_GPIO_NUM    14
+
+#define CONTROL_GPIO      13   // <-- ADDED
+
+Servo servo;
+static int servo_angle = 90;
 
 
+// ---------------- capture ----------------
 static esp_err_t capture_handler(httpd_req_t *req) {
 
-  // With fb_count=2 the oldest buffered frame may be stale – discard it first
   camera_fb_t *stale = esp_camera_fb_get();
   if (stale) esp_camera_fb_return(stale);
 
@@ -62,9 +68,7 @@ static esp_err_t capture_handler(httpd_req_t *req) {
 }
 
 
-// ------------------------------------------------------------------
-// MJPEG stream handler  (/stream)
-// ------------------------------------------------------------------
+// ---------------- stream ----------------
 static const char* STREAM_CONTENT_TYPE =
     "multipart/x-mixed-replace;boundary=frame";
 static const char* STREAM_BOUNDARY = "--frame\r\n";
@@ -105,8 +109,6 @@ static esp_err_t stream_handler(httpd_req_t *req) {
       res = httpd_resp_send_chunk(req, "\r\n", 2);
 
     esp_camera_fb_return(fb);
-
-    // Yield to RTOS so the watchdog is fed and other tasks can run
     taskYIELD();
 
     if (res != ESP_OK) break;
@@ -117,9 +119,7 @@ static esp_err_t stream_handler(httpd_req_t *req) {
 }
 
 
-// ------------------------------------------------------------------
-// Flash LED toggle  (/flash)
-// ------------------------------------------------------------------
+// ---------------- flash ----------------
 static bool flash_on = false;
 
 static esp_err_t flash_handler(httpd_req_t *req) {
@@ -140,13 +140,44 @@ static esp_err_t flash_handler(httpd_req_t *req) {
 }
 
 
+// ---------------- servo (MODIFIED ONLY INSIDE) ----------------
+static esp_err_t servo_handler(httpd_req_t *req) {
+
+  char buf[16] = "90";
+  int len = httpd_req_get_url_query_len(req);
+
+  if (len > 0) {
+    if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK) {
+
+      // ONLY THIS BLOCK CHANGED
+      if (strstr(buf, "state=on")) {
+        digitalWrite(CONTROL_GPIO, HIGH);
+      } 
+      else if (strstr(buf, "state=off")) {
+        digitalWrite(CONTROL_GPIO, LOW);
+      }
+    }
+  }
+
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+
+  char response[64];
+  snprintf(response, sizeof(response), "{\"servo\":%d}", servo_angle);
+  httpd_resp_send(req, response, strlen(response));
+
+  return ESP_OK;
+}
+
+
+// ---------------- server ----------------
 void startServer() {
 
   httpd_config_t config      = HTTPD_DEFAULT_CONFIG();
   config.max_uri_handlers    = 8;
   config.stack_size          = 8192;
-  config.max_open_sockets    = 7;    // allow more concurrent connections
-  config.lru_purge_enable    = true; // auto-close oldest idle socket when limit hit
+  config.max_open_sockets    = 7;
+  config.lru_purge_enable    = true;
   config.recv_wait_timeout   = 10;
   config.send_wait_timeout   = 10;
 
@@ -158,7 +189,6 @@ void startServer() {
         .handler   = capture_handler,
         .user_ctx  = NULL
     };
-
     httpd_register_uri_handler(server, &capture_uri);
 
     httpd_uri_t stream_uri = {
@@ -177,16 +207,25 @@ void startServer() {
     };
     httpd_register_uri_handler(server, &flash_uri);
 
+    httpd_uri_t servo_uri = {
+        .uri       = "/servo",
+        .method    = HTTP_GET,
+        .handler   = servo_handler,
+        .user_ctx  = NULL
+    };
+    httpd_register_uri_handler(server, &servo_uri);
+
     Serial.println("HTTP server started");
   }
 }
 
 
+// ---------------- wifi ----------------
 void connectWiFi() {
 
   Serial.println("Connecting to WiFi...");
-  WiFi.setSleep(false);              // disable modem sleep – eliminates wake-up latency
-  WiFi.setTxPower(WIFI_POWER_19_5dBm); // max TX power for better throughput
+  WiFi.setSleep(false);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);
   WiFi.begin(ssid, password);
 
   int retry = 0;
@@ -210,6 +249,7 @@ void connectWiFi() {
 }
 
 
+// ---------------- setup ----------------
 void setup() {
 
   Serial.begin(115200);
@@ -244,10 +284,9 @@ void setup() {
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
 
-  // Use PSRAM for frame buffers when available (AI Thinker has 4 MB PSRAM)
   if (psramFound()) {
-    config.frame_size    = FRAMESIZE_QVGA;  // 320x240 – fast transfer, good for face recog
-    config.jpeg_quality  = 12;              // slightly better quality when PSRAM handles buffers
+    config.frame_size    = FRAMESIZE_QVGA;
+    config.jpeg_quality  = 12;
     config.fb_count      = 2;
     config.fb_location   = CAMERA_FB_IN_PSRAM;
   } else {
@@ -270,35 +309,46 @@ void setup() {
   s->set_vflip(s, 1);
   s->set_hmirror(s, 1);
 
-  // Image quality tuning – cleaner image at lower bitrate
-  s->set_whitebal(s, 1);       // auto white balance on
-  s->set_awb_gain(s, 1);       // AWB gain on
-  s->set_wb_mode(s, 0);        // auto WB mode
-  s->set_exposure_ctrl(s, 1);  // auto exposure on
-  s->set_aec2(s, 1);           // AEC DSP on (better exposure in low light)
-  s->set_gain_ctrl(s, 1);      // auto gain on
-  s->set_agc_gain(s, 0);       // start gain at 0 (auto will adjust)
-  s->set_gainceiling(s, (gainceiling_t)6); // max gain ceiling
-  s->set_bpc(s, 1);            // bad pixel correction
-  s->set_wpc(s, 1);            // white pixel correction
-  s->set_raw_gma(s, 1);        // gamma correction
-  s->set_lenc(s, 1);           // lens shading correction
-  s->set_dcw(s, 1);            // downsize enable
+  s->set_whitebal(s, 1);
+  s->set_awb_gain(s, 1);
+  s->set_wb_mode(s, 0);
+  s->set_exposure_ctrl(s, 1);
+  s->set_aec2(s, 1);
+  s->set_gain_ctrl(s, 1);
+  s->set_agc_gain(s, 0);
+  s->set_gainceiling(s, (gainceiling_t)6);
+  s->set_bpc(s, 1);
+  s->set_wpc(s, 1);
+  s->set_raw_gma(s, 1);
+  s->set_lenc(s, 1);
+  s->set_dcw(s, 1);
 
   pinMode(FLASH_GPIO_NUM, OUTPUT);
   digitalWrite(FLASH_GPIO_NUM, LOW);
+
+  pinMode(CONTROL_GPIO, OUTPUT);   // <-- ADDED
+  digitalWrite(CONTROL_GPIO, LOW); // <-- ADDED
+
+  // (servo init untouched, even if unused)
+  servo.setPeriodHertz(50);
+  servo.attach(SERVO_GPIO_NUM, 1000, 2000);
+  servo.write(servo_angle);
+  Serial.printf("Servo initialized on GPIO %d\n", SERVO_GPIO_NUM);
 
   startServer();
 
   Serial.print("Endpoints: http://");
   Serial.print(WiFi.localIP());
-  Serial.println("/capture  (JPEG snapshot)");
+  Serial.println("/capture");
   Serial.print("           http://");
   Serial.print(WiFi.localIP());
-  Serial.println("/stream   (MJPEG live stream)");
+  Serial.println("/stream");
   Serial.print("           http://");
   Serial.print(WiFi.localIP());
-  Serial.println("/flash    (toggle flash LED)");
+  Serial.println("/flash");
+  Serial.print("           http://");
+  Serial.print(WiFi.localIP());
+  Serial.println("/servo?state=on or off");
 }
 
 void loop() {}
