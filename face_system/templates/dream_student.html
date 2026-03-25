@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Student Detail - Dream Analytics</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Sora:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/dream_dashboard.css" />
+</head>
+<body class="dream-body" data-dream-student="{{ student_name }}">
+  <nav class="navbar">
+    <a class="brand" href="/">&#x1F9E0; FaceID</a>
+    <div class="nav-links">
+      <a href="/dream-dashboard" class="active">Dream Analytics</a>
+      <a href="/pipeline">Pipeline</a>
+      <a href="/">Dashboard</a>
+    </div>
+  </nav>
+
+  <main class="dream-wrap">
+    <section class="dream-hero" id="studentHero">
+      <div class="dream-student-head">
+        <img id="studentAvatar" src="" alt="student" />
+        <div>
+          <p class="dream-kicker">Student Detail View</p>
+          <h1 id="studentName">-</h1>
+          <p id="studentMeta">-</p>
+        </div>
+      </div>
+      <div class="dream-hero-badges">
+        <span id="studentGreenCredits">Green Credits: -</span>
+        <span id="studentAllTimeEvents">All-time Events: -</span>
+      </div>
+    </section>
+
+    <section class="dream-toolbar">
+      <div class="dream-filters">
+        <label>From <input type="date" id="studentStartDate" /></label>
+        <label>To <input type="date" id="studentEndDate" /></label>
+        <button class="btn btn-secondary" id="studentApplyRangeBtn">Apply Range</button>
+      </div>
+    </section>
+
+    <section class="dream-kpis">
+      <article class="dream-kpi-card"><p>Events in Range</p><h3 id="studentEvents">-</h3></article>
+      <article class="dream-kpi-card"><p>Average Waste</p><h3 id="studentAvgWaste">-</h3></article>
+      <article class="dream-kpi-card"><p>Risk Score</p><h3 id="studentRisk">-</h3></article>
+      <article class="dream-kpi-card"><p>Category Mix</p><h3 id="studentCatMix">-</h3></article>
+    </section>
+
+    <section class="dream-grid-top">
+      <article class="dream-panel">
+        <header><h2>Daily Trend (Student)</h2></header>
+        <canvas id="studentTrendChart"></canvas>
+      </article>
+      <article class="dream-panel">
+        <header><h2>Category Distribution</h2></header>
+        <canvas id="studentCategoryChart"></canvas>
+      </article>
+    </section>
+
+    <section class="dream-panel">
+      <header><h2>Plate Photo Records (All Time / Date-Filtered)</h2></header>
+      <div class="dream-record-grid" id="studentPlateRecords"></div>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="/static/dream_student.js"></script>
+</body>
+</html>

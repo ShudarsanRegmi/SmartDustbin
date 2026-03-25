@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dream Analytics - FaceID</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Sora:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/dream_dashboard.css" />
+</head>
+<body class="dream-body">
+  <nav class="navbar">
+    <a class="brand" href="/">&#x1F9E0; FaceID</a>
+    <div class="nav-links">
+      <a href="/">Dashboard</a>
+      <a href="/enroll">Enroll</a>
+      <a href="/identify">Identify</a>
+      <a href="/plate">Plate Cam</a>
+      <a href="/pipeline">Pipeline</a>
+      <a href="/dream-dashboard" class="active">Dream Analytics</a>
+    </div>
+  </nav>
+
+  <main class="dream-wrap">
+    <section class="dream-hero">
+      <div>
+        <p class="dream-kicker">Mature Product View</p>
+        <h1>Waste Intelligence Command Center</h1>
+        <p>Interactive analytics demo with date-range filtering, hostel segmentation, student drill-down, and green credit intelligence.</p>
+      </div>
+      <div class="dream-hero-badges">
+        <span id="dreamPeriodBadge">Loading period...</span>
+        <span id="dreamProfilesBadge">Profiles: -</span>
+      </div>
+    </section>
+
+    <section class="dream-toolbar">
+      <div class="dream-tabs">
+        <button class="dream-tab active" data-tab="overview">Overview</button>
+        <button class="dream-tab" data-tab="hostels">Hostel Analysis</button>
+        <button class="dream-tab" data-tab="profiles">Student Profiles</button>
+      </div>
+      <div class="dream-filters">
+        <label>From <input type="date" id="dreamStartDate" /></label>
+        <label>To <input type="date" id="dreamEndDate" /></label>
+        <button class="btn btn-secondary" id="dreamApplyRangeBtn">Apply Range</button>
+      </div>
+    </section>
+
+    <section class="dream-kpis" id="dreamKpiGrid">
+      <article class="dream-kpi-card"><p>Total Events</p><h3 id="kpiTotalEvents">-</h3><small>Pipeline runs logged</small></article>
+      <article class="dream-kpi-card"><p>Avg Daily Events</p><h3 id="kpiDailyEvents">-</h3><small>Operational throughput</small></article>
+      <article class="dream-kpi-card"><p>Waste Index</p><h3 id="kpiWasteIndex">-</h3><small>1 (best) to 4 (worst)</small></article>
+      <article class="dream-kpi-card"><p>Month-over-Month</p><h3 id="kpiMoM">-</h3><small>Waste index change</small></article>
+      <article class="dream-kpi-card"><p>Avg Green Credits</p><h3 id="kpiGreenCredits">-</h3><small>Across active profiles</small></article>
+    </section>
+
+    <section class="dream-tab-panel" id="dreamTabOverview">
+      <section class="dream-grid-top">
+        <article class="dream-panel">
+          <header><h2>Daily Waste Signal (Last 30 Days)</h2></header>
+          <canvas id="dailyWasteChart"></canvas>
+        </article>
+        <article class="dream-panel">
+          <header><h2>Monthly Events and Waste Trend</h2></header>
+          <canvas id="monthlyTrendChart"></canvas>
+        </article>
+      </section>
+
+      <section class="dream-grid-mid">
+        <article class="dream-panel">
+          <header><h2>Category Mix (Selected Range)</h2></header>
+          <canvas id="categoryMixChart"></canvas>
+        </article>
+        <article class="dream-panel">
+          <header><h2>Weekday Behavior Pattern</h2></header>
+          <canvas id="weekdayChart"></canvas>
+        </article>
+        <article class="dream-panel">
+          <header><h2>Auto Insights</h2></header>
+          <ul id="dreamInsights" class="dream-insights"></ul>
+        </article>
+      </section>
+
+      <section class="dream-grid-bottom">
+        <article class="dream-panel">
+          <header><h2>Top Wasting Profiles</h2></header>
+          <div id="topWastersList" class="dream-person-list"></div>
+        </article>
+        <article class="dream-panel">
+          <header><h2>Least Wasting Profiles</h2></header>
+          <div id="leastWastersList" class="dream-person-list"></div>
+        </article>
+        <article class="dream-panel dream-profile-table-panel">
+          <header>
+            <h2>Per-Person Profile Analysis</h2>
+            <p class="muted small">Click any row to open dedicated student detail page.</p>
+          </header>
+          <div class="dream-table-wrap">
+            <table class="dream-table" id="dreamProfileTable">
+              <thead>
+                <tr>
+                  <th>Profile</th>
+                  <th>Hostel</th>
+                  <th>Events</th>
+                  <th>Avg Waste</th>
+                  <th>Green Credits</th>
+                  <th>Risk</th>
+                  <th>Category Spread (1/2/3/4)</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+    </section>
+
+    <section class="dream-tab-panel" id="dreamTabHostels" style="display:none;">
+      <section class="dream-grid-mid">
+        <article class="dream-panel">
+          <header><h2>Hostel Average Waste</h2></header>
+          <canvas id="hostelWasteChart"></canvas>
+        </article>
+        <article class="dream-panel">
+          <header><h2>Hostel Green Credits</h2></header>
+          <canvas id="hostelCreditsChart"></canvas>
+        </article>
+        <article class="dream-panel">
+          <header><h2>Hostel Comparison Table</h2></header>
+          <div class="dream-table-wrap">
+            <table class="dream-table" id="dreamHostelTable">
+              <thead>
+                <tr>
+                  <th>Hostel</th>
+                  <th>Profiles</th>
+                  <th>Events</th>
+                  <th>Avg Waste</th>
+                  <th>Avg Green Credits</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+    </section>
+
+    <section class="dream-tab-panel" id="dreamTabProfiles" style="display:none;">
+      <article class="dream-panel">
+        <header><h2>Student Directory</h2></header>
+        <div class="dream-directory" id="dreamProfileDirectory"></div>
+      </article>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="/static/dream_dashboard.js"></script>
+</body>
+</html>
