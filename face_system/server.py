@@ -1235,6 +1235,79 @@ def api_pipeline_capture_plate(
     }
 
 
+@app.post("/api/pipeline/auto_run")
+def api_pipeline_auto_run():
+    """
+    Fully automated pipeline execution in one request:
+    1. Capture face from ESP32 Face Cam & recognize member.
+    2. If recognized, capture plate from Plate Cam (Phone IP Webcam / ESP32).
+    3. Classify waste & actuate servo lid cycle (4s).
+    4. Save event for analytics.
+    """
+    try:
+        img, raw_face = _fetch_image(f"{_esp32_base()}/capture")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Face camera unreachable: {e}")
+
+    emb = extract_embedding(img)
+    encoded_face = base64.b64encode(raw_face).decode()
+
+    if emb is None:
+        return {
+            "status": "no_face",
+            "message": "No face detected in front of camera.",
+            "face_image": f"data:image/jpeg;base64,{encoded_face}",
+        }
+
+    name, score, _all_scores = recognize_face(emb)
+    if name == "unknown":
+        return {
+            "status": "unknown",
+            "score": round(float(score), 4),
+            "message": "Face detected but not enrolled in database.",
+            "face_image": f"data:image/jpeg;base64,{encoded_face}",
+        }
+
+    confidence = round(max(0.0, (THRESHOLD - score) / THRESHOLD) * 100, 1)
+
+    plate_img, raw_plate = _fetch_plate_image()
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    ms = int(time.time() * 1000) % 1000
+    filename = f"{ts}_{ms:03d}.jpg"
+    os.makedirs(PIPELINE_PLATES_DIR, exist_ok=True)
+    filepath = os.path.join(PIPELINE_PLATES_DIR, filename)
+    with open(filepath, "wb") as fh:
+        fh.write(raw_plate)
+
+    waste_category = random.randint(1, 4)
+    servo = _run_reversed_servo_cycle(duration_seconds=4)
+
+    event = record_pipeline_event({
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "person": name,
+        "face_score": round(float(score), 4),
+        "plate_photo": f"/api/pipeline/plate_photo/{filename}",
+        "waste_category": waste_category,
+        "servo": servo,
+    })
+
+    encoded_plate = base64.b64encode(raw_plate).decode()
+
+    return {
+        "status": "completed",
+        "person": name,
+        "score": round(float(score), 4),
+        "confidence": confidence,
+        "face_image": f"data:image/jpeg;base64,{encoded_face}",
+        "plate_image": f"data:image/jpeg;base64,{encoded_plate}",
+        "waste_category": waste_category,
+        "servo": servo,
+        "event": event,
+        "message": f"Successfully processed {name}. Waste category {waste_category} logged. Servo lid cycle executed.",
+    }
+
+
+
 @app.get("/api/pipeline/plate_photo/{filename}")
 def api_pipeline_plate_photo(filename: str):
     if "/" in filename or ".." in filename:

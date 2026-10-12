@@ -23,11 +23,58 @@
 
   <main class="page-container pipeline-page">
     <div class="pipeline-hero">
-      <h1>Waste Pipeline Console</h1>
-      <p class="subtitle">Recognize member, upload plate photo, classify waste, and trigger servo flow in one run.</p>
-      <div class="pipeline-tabs" id="pipelineTabs">
-        <button class="pipeline-tab active" id="pipelineTabRunBtn" data-tab="run">Run Pipeline</button>
-        <button class="pipeline-tab" id="pipelineTabAnalyticsBtn" data-tab="analytics">Analytics</button>
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:1rem;">
+        <div>
+          <h1>Waste Pipeline Console</h1>
+          <p class="subtitle">Autonomous smart dustbin: Detect student face &rarr; capture plate photo &rarr; classify waste &rarr; open servo lid.</p>
+        </div>
+        <div class="pipeline-tabs" id="pipelineTabs">
+          <button class="pipeline-tab active" id="pipelineTabRunBtn" data-tab="run">Run Pipeline</button>
+          <button class="pipeline-tab" id="pipelineTabAnalyticsBtn" data-tab="analytics">Analytics</button>
+        </div>
+      </div>
+
+      <!-- Mode Selector & Controls Bar -->
+      <div class="pipeline-mode-bar" id="pipelineModeBar">
+        <div class="pipeline-mode-toggles">
+          <label class="mode-pill active" id="modePillAuto">
+            <input type="radio" name="pipelineMode" id="modeAuto" value="auto" checked onchange="togglePipelineMode('auto')">
+            <span>⚡ Fully Automated (Dual-Camera)</span>
+          </label>
+          <label class="mode-pill" id="modePillManual">
+            <input type="radio" name="pipelineMode" id="modeManual" value="manual" onchange="togglePipelineMode('manual')">
+            <span>✋ Step-by-Step / Manual</span>
+          </label>
+        </div>
+        <div class="pipeline-loop-toggle">
+          <label class="checkbox-container" title="Continuously scan for members and process hands-free">
+            <input type="checkbox" id="pipelineAutoLoop" onchange="toggleAutoLoopSetting()">
+            <span>🔁 Continuous Loop (Kiosk Mode)</span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stepper indicator -->
+    <div class="pipeline-stepper" id="pipelineStepper">
+      <div class="stepper-step active" id="step1Indicator">
+        <span class="stepper-num">1</span>
+        <span>Face Detection</span>
+      </div>
+      <div class="stepper-divider"></div>
+      <div class="stepper-step" id="step2Indicator">
+        <span class="stepper-num">2</span>
+        <span>Plate Capture</span>
+      </div>
+      <div class="stepper-divider"></div>
+      <div class="stepper-step" id="step3Indicator">
+        <span class="stepper-num">3</span>
+        <span>Waste Classify</span>
+      </div>
+      <div class="stepper-divider"></div>
+      <div class="stepper-step" id="step4Indicator">
+        <span class="stepper-num">4</span>
+        <span>Servo Lid Actuation</span>
       </div>
     </div>
 
@@ -38,7 +85,7 @@
             <span class="step-num">1</span>
             <h2 class="card-title">Face Recognition</h2>
           </div>
-          <p class="muted small">Capture from ESP32 `/capture`, identify member, then continue to upload step.</p>
+          <p class="muted small" id="pipelineStep1Desc">Capture from ESP32 Face Cam &amp; recognize member.</p>
 
           <div class="preview-box pipeline-preview-compact" id="pipelineFacePreviewBox">
             <div class="preview-placeholder" id="pipelineFacePlaceholder">
@@ -47,7 +94,14 @@
             <img id="pipelineFaceImg" src="" alt="Face capture" style="display:none;" />
           </div>
 
-          <button class="btn btn-primary full-width" id="pipelineStartBtn">Start Pipeline</button>
+          <div style="display:flex; gap:0.5rem; margin-top:0.75rem;">
+            <button class="btn btn-primary full-width" id="pipelineStartBtn">
+              <span id="pipelineStartBtnIcon">&#x1F680;</span> <span id="pipelineStartBtnText">Start Automated Pipeline</span>
+            </button>
+            <button class="btn btn-danger" id="pipelineStopLoopBtn" style="display:none;" onclick="stopPipelineAutoLoop()">
+              &#x23F9; Stop
+            </button>
+          </div>
           <div id="pipelineFaceStatus" class="status-box" style="display:none;"></div>
 
           <div class="pipeline-person" id="pipelinePersonWrap" style="display:none;">
@@ -58,16 +112,19 @@
         <div class="card pipeline-step-card pipeline-step-plate">
           <div class="pipeline-step-head">
             <span class="step-num">2</span>
-            <h2 class="card-title">Plate Upload + Classify</h2>
+            <h2 class="card-title">Plate Capture &amp; Waste Classification</h2>
           </div>
-          <p class="muted small">When a member is recognized, upload the plate image to complete the flow.</p>
+          <p class="muted small" id="pipelineStep2Desc">Captures plate photo from Phone / Plate Cam and operates the dustbin servo lid.</p>
 
-          <div class="pipeline-upload-hint" id="pipelineUploadHint">
+          <!-- Auto mode explanation pill -->
+          <div class="pipeline-auto-notice" id="pipelineAutoNotice">
+            ⚡ <strong>Automated Mode:</strong> As soon as the student is recognized, the system automatically takes the plate photo, classifies food waste, and actuates the servo lid.
+          </div>
+
+          <!-- Manual upload hint (shown only in manual mode) -->
+          <div class="pipeline-upload-hint" id="pipelineUploadHint" style="display:none;">
             Please recognize a member first. Upload will unlock automatically.
           </div>
-
-          <label class="field-label" for="pipelinePlateFile">Plate Image</label>
-          <input id="pipelinePlateFile" class="text-input" type="file" accept="image/*" />
 
           <div class="preview-box pipeline-preview-compact" id="pipelinePlatePreviewBox">
             <div class="preview-placeholder" id="pipelinePlatePlaceholder">
@@ -76,29 +133,43 @@
             <img id="pipelinePlateImg" src="" alt="Plate preview" style="display:none; width:100%; height:100%; object-fit:cover; border-radius:inherit;" />
           </div>
 
-          <button class="btn btn-primary full-width mt-sm" id="pipelineCaptureCameraBtn" onclick="pipelineCaptureFromCamera()" disabled>
-            &#x1F4F8; Auto-Capture from Phone / Plate Cam
-          </button>
+          <div id="pipelineManualControls" style="display:none; margin-top:0.75rem;">
+            <button class="btn btn-primary full-width" id="pipelineCaptureCameraBtn" onclick="pipelineCaptureFromCamera()" disabled>
+              &#x1F4F8; Capture from Phone / Plate Cam
+            </button>
 
-          <div style="display:flex;align-items:center;margin:0.6rem 0;color:var(--text-muted);font-size:0.78rem;text-align:center;">
-            <div style="flex:1;height:1px;background:var(--border);"></div>
-            <span style="padding:0 0.5rem;">OR manual upload</span>
-            <div style="flex:1;height:1px;background:var(--border);"></div>
+            <div style="display:flex;align-items:center;margin:0.6rem 0;color:var(--text-muted);font-size:0.78rem;text-align:center;">
+              <div style="flex:1;height:1px;background:var(--border);"></div>
+              <span style="padding:0 0.5rem;">OR file upload</span>
+              <div style="flex:1;height:1px;background:var(--border);"></div>
+            </div>
+
+            <label class="field-label" for="pipelinePlateFile">Upload Plate File</label>
+            <input id="pipelinePlateFile" class="text-input" type="file" accept="image/*" />
+
+            <button class="btn btn-secondary full-width mt-xs" id="pipelineUploadBtn" disabled>
+              Upload File &amp; Complete Pipeline
+            </button>
           </div>
-
-          <label class="field-label" for="pipelinePlateFile">Upload Plate Image</label>
-          <input id="pipelinePlateFile" class="text-input" type="file" accept="image/*" />
-
-          <button class="btn btn-secondary full-width mt-xs" id="pipelineUploadBtn" disabled>
-            Upload File and Complete Pipeline
-          </button>
 
           <div id="pipelinePlateStatus" class="status-box" style="display:none;"></div>
         </div>
       </div>
 
-      <div class="pipeline-ready-note" id="pipelineReadyNote" style="display:none;">
-        Pipeline completed. Resetting interface for next member...
+      <!-- Completion / Summary Card -->
+      <div class="pipeline-success-card" id="pipelineSuccessCard" style="display:none;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.6rem;">
+          <h3 style="margin:0; font-size:1.1rem; color:var(--success);">&#x2705; Pipeline Completed Successfully!</h3>
+          <span class="pipeline-pill" id="pipelineSummaryStudent" style="font-size:0.9rem;">-</span>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:0.75rem; font-size:0.85rem; color:var(--text-muted);">
+          <div>&#x1F37D;&#xFE0F; Waste Category: <strong id="pipelineSummaryWaste" style="color:#fff;">-</strong></div>
+          <div>&#x2699;&#xFE0F; Servo Lid Cycle: <strong id="pipelineSummaryServo" style="color:var(--success);">4s Actuated</strong></div>
+          <div>&#x23F1;&#xFE0F; Timestamp: <strong id="pipelineSummaryTime" style="color:#fff;">-</strong></div>
+        </div>
+        <div class="pipeline-ready-note mt-xs" id="pipelineReadyNote" style="display:block; margin-top:0.75rem;">
+          Resetting interface for next member...
+        </div>
       </div>
     </section>
 
@@ -151,6 +222,9 @@
 
       if (typeof window.loadPipelineAnalytics === 'function') {
         window.loadPipelineAnalytics();
+      }
+      if (typeof window.togglePipelineMode === 'function') {
+        window.togglePipelineMode('auto');
       }
     });
   </script>

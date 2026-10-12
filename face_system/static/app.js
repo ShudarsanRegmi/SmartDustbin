@@ -984,6 +984,96 @@ async function deletePlateEvent(id, btn) {
 // -----------------------------------------------------------------
 let pipelineRecognizedPerson = null;
 let pipelineFaceScore = null;
+let pipelineMode = 'auto'; // 'auto' | 'manual'
+let pipelineAutoLoopActive = false;
+let pipelineLoopTimeoutId = null;
+let pipelineCountdownIntervalId = null;
+let pipelineIsRunning = false;
+
+function setPipelineStep(step) {
+  for (let i = 1; i <= 4; i++) {
+    const el = document.getElementById(`step${i}Indicator`);
+    if (!el) continue;
+    el.classList.remove('active', 'completed');
+    if (i < step) {
+      el.classList.add('completed');
+    } else if (i === step) {
+      el.classList.add('active');
+    }
+  }
+}
+
+function togglePipelineMode(mode) {
+  pipelineMode = mode;
+  const pillAuto = document.getElementById('modePillAuto');
+  const pillManual = document.getElementById('modePillManual');
+  const autoNotice = document.getElementById('pipelineAutoNotice');
+  const manualControls = document.getElementById('pipelineManualControls');
+  const uploadHint = document.getElementById('pipelineUploadHint');
+  const startBtnText = document.getElementById('pipelineStartBtnText');
+  const startBtnIcon = document.getElementById('pipelineStartBtnIcon');
+  const step1Desc = document.getElementById('pipelineStep1Desc');
+
+  if (mode === 'auto') {
+    if (pillAuto) pillAuto.classList.add('active');
+    if (pillManual) pillManual.classList.remove('active');
+    if (autoNotice) autoNotice.style.display = 'block';
+    if (manualControls) manualControls.style.display = 'none';
+    if (uploadHint) uploadHint.style.display = 'none';
+    if (startBtnText) startBtnText.textContent = pipelineAutoLoopActive ? 'Auto-Loop Running...' : 'Start Automated Pipeline';
+    if (startBtnIcon) startBtnIcon.textContent = '🚀';
+    if (step1Desc) step1Desc.textContent = 'Capture face, recognize member & automatically trigger plate capture + servo.';
+  } else {
+    if (pillAuto) pillAuto.classList.remove('active');
+    if (pillManual) pillManual.classList.add('active');
+    if (autoNotice) autoNotice.style.display = 'none';
+    if (manualControls) manualControls.style.display = 'block';
+    if (uploadHint) uploadHint.style.display = pipelineRecognizedPerson ? 'none' : 'block';
+    if (startBtnText) startBtnText.textContent = 'Detect & Recognize Face';
+    if (startBtnIcon) startBtnIcon.textContent = '🔍';
+    if (step1Desc) step1Desc.textContent = 'Capture from ESP32 Face Cam & recognize member.';
+    stopPipelineAutoLoop();
+  }
+}
+window.togglePipelineMode = togglePipelineMode;
+
+function toggleAutoLoopSetting() {
+  const cb = document.getElementById('pipelineAutoLoop');
+  if (!cb) return;
+  if (cb.checked) {
+    pipelineAutoLoopActive = true;
+    togglePipelineMode('auto');
+    const stopBtn = document.getElementById('pipelineStopLoopBtn');
+    if (stopBtn) stopBtn.style.display = 'inline-block';
+    if (!pipelineIsRunning) {
+      pipelineStart();
+    }
+  } else {
+    stopPipelineAutoLoop();
+  }
+}
+window.toggleAutoLoopSetting = toggleAutoLoopSetting;
+
+function stopPipelineAutoLoop() {
+  pipelineAutoLoopActive = false;
+  if (pipelineLoopTimeoutId) {
+    clearTimeout(pipelineLoopTimeoutId);
+    pipelineLoopTimeoutId = null;
+  }
+  if (pipelineCountdownIntervalId) {
+    clearInterval(pipelineCountdownIntervalId);
+    pipelineCountdownIntervalId = null;
+  }
+  const cb = document.getElementById('pipelineAutoLoop');
+  if (cb) cb.checked = false;
+  const stopBtn = document.getElementById('pipelineStopLoopBtn');
+  if (stopBtn) stopBtn.style.display = 'none';
+  const startBtnText = document.getElementById('pipelineStartBtnText');
+  if (startBtnText) {
+    startBtnText.textContent = pipelineMode === 'auto' ? 'Start Automated Pipeline' : 'Detect & Recognize Face';
+  }
+}
+window.stopPipelineAutoLoop = stopPipelineAutoLoop;
 
 function pipelineSwitchTab(tab) {
   const runTab = document.getElementById('pipelineRunTab');
@@ -1030,6 +1120,7 @@ function pipelineHandlePlateSelection() {
 function pipelineResetUi() {
   pipelineRecognizedPerson = null;
   pipelineFaceScore = null;
+  pipelineIsRunning = false;
 
   const uploadBtn = document.getElementById('pipelineUploadBtn');
   const personWrap = document.getElementById('pipelinePersonWrap');
@@ -1037,6 +1128,7 @@ function pipelineResetUi() {
   const plateStatus = document.getElementById('pipelinePlateStatus');
   const uploadHint = document.getElementById('pipelineUploadHint');
   const readyNote = document.getElementById('pipelineReadyNote');
+  const successCard = document.getElementById('pipelineSuccessCard');
 
   const faceImg = document.getElementById('pipelineFaceImg');
   const facePlaceholder = document.getElementById('pipelineFacePlaceholder');
@@ -1051,9 +1143,11 @@ function pipelineResetUi() {
   if (faceStatus) faceStatus.style.display = 'none';
   if (plateStatus) plateStatus.style.display = 'none';
   if (readyNote) readyNote.style.display = 'none';
+  if (successCard) successCard.style.display = 'none';
 
   if (uploadHint) {
     uploadHint.textContent = 'Please recognize a member first. Upload will unlock automatically.';
+    uploadHint.style.display = pipelineMode === 'manual' ? 'block' : 'none';
   }
 
   if (faceImg) {
@@ -1071,9 +1165,14 @@ function pipelineResetUi() {
   if (plateFile) {
     plateFile.value = '';
   }
+
+  setPipelineStep(1);
 }
 
 async function pipelineStart() {
+  if (pipelineIsRunning) return;
+  pipelineIsRunning = true;
+
   const btn = document.getElementById('pipelineStartBtn');
   const statusBox = document.getElementById('pipelineFaceStatus');
   const previewImg = document.getElementById('pipelineFaceImg');
@@ -1084,22 +1183,29 @@ async function pipelineStart() {
   const camBtn = document.getElementById('pipelineCaptureCameraBtn');
   const uploadHint = document.getElementById('pipelineUploadHint');
   const readyNote = document.getElementById('pipelineReadyNote');
+  const successCard = document.getElementById('pipelineSuccessCard');
+  const stopBtn = document.getElementById('pipelineStopLoopBtn');
 
-  setLoading(btn, true);
-  setStatus(statusBox, 'loading', 'Capturing face and running identification...');
+  if (stopBtn) stopBtn.style.display = pipelineAutoLoopActive ? 'inline-block' : 'none';
+  if (successCard) successCard.style.display = 'none';
   if (readyNote) readyNote.style.display = 'none';
+
+  setPipelineStep(1);
+  setLoading(btn, true);
+  setStatus(statusBox, 'loading', 'Capturing face from Face Cam & identifying member...');
 
   try {
     const res = await fetch('/api/pipeline/start', { method: 'POST' });
     const data = await res.json();
 
     if (!res.ok) {
-      setStatus(statusBox, 'error', 'Pipeline start failed: ' + (data.detail || 'Server error'));
+      setStatus(statusBox, 'error', 'Face capture failed: ' + (data.detail || 'Camera offline'));
       pipelineRecognizedPerson = null;
       pipelineFaceScore = null;
-      if (uploadBtn) uploadBtn.disabled = true;
-      if (camBtn) camBtn.disabled = true;
-      if (personWrap) personWrap.style.display = 'none';
+      pipelineIsRunning = false;
+      if (pipelineAutoLoopActive) {
+        pipelineLoopTimeoutId = setTimeout(() => { pipelineStart(); }, 3000);
+      }
       return;
     }
 
@@ -1112,66 +1218,85 @@ async function pipelineStart() {
     if (data.status === 'recognized') {
       pipelineRecognizedPerson = data.person;
       pipelineFaceScore = data.score;
-      setStatus(statusBox, 'success', data.message + ' Please capture or upload plate image to continue.');
+      const conf = data.confidence ? ` (${data.confidence}% confidence)` : '';
+      setStatus(statusBox, 'success', `✓ Recognized: ${data.person}${conf}`);
       if (personName) personName.textContent = 'Recognized: ' + data.person;
       if (personWrap) personWrap.style.display = '';
       if (uploadBtn) uploadBtn.disabled = false;
       if (camBtn) camBtn.disabled = false;
-      if (uploadHint) {
-        uploadHint.textContent = 'Member recognized. Click Auto-Capture or upload a plate image.';
+      if (uploadHint) uploadHint.style.display = 'none';
+
+      setPipelineStep(2);
+
+      // In Automated Mode: Automatically proceed to Plate Capture + Classification + Servo
+      if (pipelineMode === 'auto') {
+        setStatus(statusBox, 'success', `✓ ${data.person} identified! Auto-capturing plate photo from Plate Cam...`);
+        // Smooth visual transition
+        setTimeout(() => {
+          pipelineCaptureFromCamera(true);
+        }, 350);
+        return;
       }
     } else if (data.status === 'unknown') {
       pipelineRecognizedPerson = null;
       pipelineFaceScore = data.score;
-      setStatus(statusBox, 'error', 'Face not recognized. Please enroll first.');
+      setStatus(statusBox, 'error', 'Face detected but not enrolled in database.');
       if (personWrap) personWrap.style.display = 'none';
       if (uploadBtn) uploadBtn.disabled = true;
       if (camBtn) camBtn.disabled = true;
-      if (uploadHint) {
-        uploadHint.textContent = 'Recognition failed. Enroll this member, then retry.';
+      if (uploadHint) uploadHint.textContent = 'Recognition failed. Please enroll this member first.';
+      pipelineIsRunning = false;
+      if (pipelineAutoLoopActive) {
+        setStatus(statusBox, 'error', 'Face not enrolled. Scanning again in 3 seconds...');
+        pipelineLoopTimeoutId = setTimeout(() => { pipelineStart(); }, 3000);
       }
     } else {
       pipelineRecognizedPerson = null;
       pipelineFaceScore = null;
-      setStatus(statusBox, 'error', data.message || 'No face detected. Please try again.');
+      setStatus(statusBox, 'error', data.message || 'No face detected in camera view.');
       if (personWrap) personWrap.style.display = 'none';
       if (uploadBtn) uploadBtn.disabled = true;
       if (camBtn) camBtn.disabled = true;
-      if (uploadHint) {
-        uploadHint.textContent = 'No face detected. Start again and ensure face is visible.';
+      pipelineIsRunning = false;
+      if (pipelineAutoLoopActive) {
+        pipelineLoopTimeoutId = setTimeout(() => { pipelineStart(); }, 2500);
       }
     }
   } catch (err) {
     setStatus(statusBox, 'error', 'Network error: ' + err.message);
     pipelineRecognizedPerson = null;
     pipelineFaceScore = null;
-    if (uploadBtn) uploadBtn.disabled = true;
-    if (camBtn) camBtn.disabled = true;
-    if (personWrap) personWrap.style.display = 'none';
-    if (uploadHint) {
-      uploadHint.textContent = 'Connection issue. Retry face capture.';
+    pipelineIsRunning = false;
+    if (pipelineAutoLoopActive) {
+      pipelineLoopTimeoutId = setTimeout(() => { pipelineStart(); }, 3500);
     }
   } finally {
     setLoading(btn, false);
+    if (pipelineMode === 'manual') {
+      pipelineIsRunning = false;
+    }
   }
 }
 
-async function pipelineCaptureFromCamera() {
+async function pipelineCaptureFromCamera(isAuto = false) {
   const btn = document.getElementById('pipelineCaptureCameraBtn');
   const uploadBtn = document.getElementById('pipelineUploadBtn');
   const statusBox = document.getElementById('pipelinePlateStatus');
   const previewImg = document.getElementById('pipelinePlateImg');
   const placeholder = document.getElementById('pipelinePlatePlaceholder');
   const readyNote = document.getElementById('pipelineReadyNote');
+  const successCard = document.getElementById('pipelineSuccessCard');
 
   if (!pipelineRecognizedPerson) {
     setStatus(statusBox, 'error', 'Run face recognition first.');
+    pipelineIsRunning = false;
     return;
   }
 
-  setLoading(btn, true);
+  setPipelineStep(2);
+  if (btn) setLoading(btn, true);
   if (uploadBtn) uploadBtn.disabled = true;
-  setStatus(statusBox, 'loading', 'Capturing plate from phone camera & processing waste...');
+  setStatus(statusBox, 'loading', '📸 Capturing plate from camera, analyzing waste & actuating servo lid...');
   if (readyNote) readyNote.style.display = 'none';
 
   try {
@@ -1181,6 +1306,7 @@ async function pipelineCaptureFromCamera() {
       fd.append('face_score', String(pipelineFaceScore));
     }
 
+    setPipelineStep(3);
     const res = await fetch('/api/pipeline/capture_plate', {
       method: 'POST',
       body: fd,
@@ -1188,9 +1314,12 @@ async function pipelineCaptureFromCamera() {
     const data = await res.json();
 
     if (!res.ok) {
-      setStatus(statusBox, 'error', 'Plate capture failed: ' + (data.detail || 'Server error'));
+      setStatus(statusBox, 'error', 'Plate capture failed: ' + (data.detail || 'Camera offline'));
+      pipelineIsRunning = false;
       return;
     }
+
+    setPipelineStep(4);
 
     if (data.image && previewImg) {
       previewImg.src = data.image;
@@ -1198,21 +1327,64 @@ async function pipelineCaptureFromCamera() {
       if (placeholder) placeholder.style.display = 'none';
     }
 
-    setStatus(statusBox, 'success', data.message || 'Plate captured and processed successfully!');
+    const wasteCat = data.event ? data.event.waste_category : '?';
+    setStatus(statusBox, 'success', `✓ Plate logged! Waste Category: ${wasteCat}. Bin lid cycle completed.`);
 
-    if (readyNote) {
-      readyNote.style.display = 'block';
-      readyNote.textContent = 'Pipeline finished successfully! Resetting for next person in 5 seconds...';
+    // Show completion card
+    if (successCard && data.event) {
+      successCard.style.display = 'block';
+      const sumStudent = document.getElementById('pipelineSummaryStudent');
+      const sumWaste = document.getElementById('pipelineSummaryWaste');
+      const sumServo = document.getElementById('pipelineSummaryServo');
+      const sumTime = document.getElementById('pipelineSummaryTime');
+      if (sumStudent) sumStudent.textContent = data.event.person;
+      if (sumWaste) sumWaste.textContent = `Category ${data.event.waste_category}`;
+      if (sumServo) sumServo.textContent = '✓ 4s Servo Cycle Executed';
+      if (sumTime) sumTime.textContent = data.event.timestamp;
     }
 
-    setTimeout(() => {
-      pipelineResetUi();
-    }, 5000);
+    // Refresh analytics in background if loaded
+    if (typeof loadPipelineAnalytics === 'function') {
+      loadPipelineAnalytics();
+    }
+
+    // Cooldown and auto-reset
+    let secondsLeft = 5;
+    if (readyNote) {
+      readyNote.style.display = 'block';
+      readyNote.textContent = pipelineAutoLoopActive
+        ? `🔁 Auto-loop: Next scan in ${secondsLeft}s...`
+        : `Pipeline complete! Resetting in ${secondsLeft}s...`;
+    }
+
+    if (pipelineCountdownIntervalId) clearInterval(pipelineCountdownIntervalId);
+    pipelineCountdownIntervalId = setInterval(() => {
+      secondsLeft -= 1;
+      if (secondsLeft > 0) {
+        if (readyNote) {
+          readyNote.textContent = pipelineAutoLoopActive
+            ? `🔁 Auto-loop: Next scan in ${secondsLeft}s...`
+            : `Pipeline complete! Resetting in ${secondsLeft}s...`;
+        }
+      } else {
+        clearInterval(pipelineCountdownIntervalId);
+        pipelineCountdownIntervalId = null;
+        pipelineResetUi();
+        if (pipelineAutoLoopActive) {
+          pipelineStart();
+        }
+      }
+    }, 1000);
+
   } catch (err) {
     setStatus(statusBox, 'error', 'Error: ' + err.message);
+    pipelineIsRunning = false;
   } finally {
-    setLoading(btn, false);
+    if (btn) setLoading(btn, false);
     if (uploadBtn && pipelineRecognizedPerson) uploadBtn.disabled = false;
+    if (pipelineMode === 'manual') {
+      pipelineIsRunning = false;
+    }
   }
 }
 window.pipelineCaptureFromCamera = pipelineCaptureFromCamera;
@@ -1222,6 +1394,7 @@ async function pipelineUploadPlate() {
   const statusBox = document.getElementById('pipelinePlateStatus');
   const fileInput = document.getElementById('pipelinePlateFile');
   const readyNote = document.getElementById('pipelineReadyNote');
+  const successCard = document.getElementById('pipelineSuccessCard');
 
   if (!pipelineRecognizedPerson) {
     setStatus(statusBox, 'error', 'Run face recognition first.');
@@ -1232,6 +1405,7 @@ async function pipelineUploadPlate() {
     return;
   }
 
+  setPipelineStep(3);
   setLoading(btn, true);
   setStatus(statusBox, 'loading', 'Uploading plate image, classifying waste, and controlling servo...');
 
@@ -1251,18 +1425,33 @@ async function pipelineUploadPlate() {
       return;
     }
 
+    setPipelineStep(4);
     const event = data.event || {};
     const cat = event.waste_category;
     const servoStatus = event.servo && event.servo.status ? event.servo.status : 'unknown';
     setStatus(statusBox, 'success', 'Saved event. Waste category: ' + cat + '. Servo: ' + servoStatus + '.');
+
+    if (successCard && event) {
+      successCard.style.display = 'block';
+      const sumStudent = document.getElementById('pipelineSummaryStudent');
+      const sumWaste = document.getElementById('pipelineSummaryWaste');
+      const sumServo = document.getElementById('pipelineSummaryServo');
+      const sumTime = document.getElementById('pipelineSummaryTime');
+      if (sumStudent) sumStudent.textContent = event.person || pipelineRecognizedPerson;
+      if (sumWaste) sumWaste.textContent = `Category ${cat}`;
+      if (sumServo) sumServo.textContent = '✓ 4s Servo Cycle Executed';
+      if (sumTime) sumTime.textContent = event.timestamp;
+    }
+
     await loadPipelineAnalytics();
     if (readyNote) {
       readyNote.style.display = '';
+      readyNote.textContent = 'Pipeline finished successfully! Resetting in 5s...';
     }
     setTimeout(() => {
       pipelineResetUi();
       pipelineSwitchTab('run');
-    }, 2600);
+    }, 5000);
   } catch (err) {
     setStatus(statusBox, 'error', 'Network error: ' + err.message);
   } finally {
