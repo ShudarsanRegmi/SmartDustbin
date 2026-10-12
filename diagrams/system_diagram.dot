@@ -1,0 +1,26 @@
+digraph SYSTEM {
+  rankdir=LR;
+  bgcolor="white";
+  graph [fontname="Helvetica"];
+  node [shape=box, style=filled, fillcolor="#f8fafc", color="#334155", fontname="Helvetica", fontsize=11];
+  edge [color="#475569", fontname="Helvetica", fontsize=10];
+
+  user [label="User"];
+  facecam [label="Face ESP32-CAM\n/capture /stream /flash /servo", fillcolor="#eef2ff", color="#3730a3"];
+  platecam [label="Plate ESP32-CAM\n/capture /stream /flash", fillcolor="#ecfeff", color="#155e75"];
+  server [label="FastAPI Server\nPipeline Orchestrator", fillcolor="#fefce8", color="#854d0e"];
+  recognizer [label="Recognizer\nInsightFace + FAISS", fillcolor="#f0fdf4", color="#166534"];
+  storage [label="Storage\nprofiles + embeddings + events", fillcolor="#fff7ed", color="#9a3412"];
+  lid [label="Lid Control\nGPIO/Servo", fillcolor="#fdf2f8", color="#9d174d"];
+  ui [label="Web Dashboard/UI", fillcolor="#eff6ff", color="#1d4ed8"];
+
+  user -> facecam;
+  user -> platecam;
+  facecam -> server;
+  platecam -> server;
+  server -> recognizer;
+  server -> storage;
+  server -> lid [label="state on/off"];
+  server -> ui;
+  ui -> server;
+}

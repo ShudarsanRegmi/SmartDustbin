@@ -1,0 +1,27 @@
+direction: right
+
+title: "Smart Dustbin DFA"
+
+q0: "q0\nIdle"
+q1: "q1\nFace Captured"
+q2: "q2\nFace Recognized"
+q3: "q3\nPlate Uploaded"
+q4: "q4\nWaste Classified +\nEvent Stored"
+q5: "q5\nLid Actuation Complete"
+qR: "qR\nReject/Retry"
+
+start: "Start"
+start -> q0
+
+q0 -> q1: "capture_face"
+q1 -> q2: "face_ok"
+q1 -> qR: "face_unknown / no_face"
+qR -> q0: "retry"
+
+q2 -> q3: "plate_upload"
+q3 -> q4: "classify_done"
+q4 -> q5: "servo_done"
+q5 -> q0: "next cycle"
+
+q5.style.double-border: true
+qR.style.fill: "#fff1f2"

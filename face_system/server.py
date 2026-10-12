@@ -14,8 +14,9 @@ import random
 import math
 from typing import Optional
 from datetime import date, timedelta
-from urllib.parse import quote_plus
+from urllib.parse import quote, quote_plus
 from dotenv import load_dotenv
+from pydantic import BaseModel
 
 load_dotenv(override=True)
 
@@ -26,14 +27,70 @@ import shutil
 # Defaults only — actual values always come from .env via os.getenv() at call time
 _DEFAULT_ESP32_URL      = "http://11.12.20.131"
 _DEFAULT_PLATE_CAM_URL  = "http://11.12.20.132"
+SETTINGS_FILE  = "face_db/settings.json"
 PROFILES_FILE  = "face_db/profiles.json"
 PHOTOS_DIR     = "face_db/photos"
 PLATE_EVENTS_FILE = "face_db/plate_events.json"
 PIPELINE_PLATES_DIR = "face_db/pipeline_plates"
+_DATASET_TRAIN_IMAGES_DIR = "/home/aparichit/Desktop/DataSet/Leftover Food Detection.v2i.coco/train"
+_DATASET_TRAIN_ROUTE = "/dataset-train-images"
 
 app = FastAPI(title="ESP32 Face Recognition")
 app.mount("/static", StaticFiles(directory="static"), name="static")
+if os.path.isdir(_DATASET_TRAIN_IMAGES_DIR):
+    app.mount(_DATASET_TRAIN_ROUTE, StaticFiles(directory=_DATASET_TRAIN_IMAGES_DIR), name="dataset_train_images")
 templates = Jinja2Templates(directory="templates")
+
+
+def _load_settings() -> dict:
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_settings(settings: dict):
+    os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump(settings, f, indent=2)
+
+
+def _update_env_file(key: str, value: str):
+    env_path = ".env"
+    try:
+        lines = []
+        found = False
+        if os.path.exists(env_path):
+            with open(env_path, "r") as f:
+                lines = f.readlines()
+            new_lines = []
+            for line in lines:
+                if line.strip().startswith(f"{key}="):
+                    new_lines.append(f"{key}={value}\n")
+                    found = True
+                else:
+                    new_lines.append(line)
+            lines = new_lines
+        if not found:
+            lines.append(f"{key}={value}\n")
+        with open(env_path, "w") as f:
+            f.writelines(lines)
+    except Exception as e:
+        print(f"Warning: Failed to update .env: {e}")
+
+
+def _normalize_device_url(val: str, default: str) -> str:
+    if not val:
+        return default
+    val = val.strip().rstrip("/")
+    if not val:
+        return default
+    if not val.startswith("http://") and not val.startswith("https://"):
+        val = f"http://{val}"
+    return val
 
 
 def load_profiles() -> dict:
@@ -57,13 +114,19 @@ _ESP32_TIMEOUT = (4, 25)
 
 
 def _esp32_base():
+    st = _load_settings()
+    if st.get("esp32_url"):
+        return _normalize_device_url(st["esp32_url"], _DEFAULT_ESP32_URL)
     load_dotenv(override=True)
-    return os.getenv("ESP32_URL", _DEFAULT_ESP32_URL).rstrip("/")
+    return _normalize_device_url(os.getenv("ESP32_URL", _DEFAULT_ESP32_URL), _DEFAULT_ESP32_URL)
 
 
 def _plate_base():
+    st = _load_settings()
+    if st.get("plate_cam_url"):
+        return _normalize_device_url(st["plate_cam_url"], _DEFAULT_PLATE_CAM_URL)
     load_dotenv(override=True)
-    return os.getenv("PLATE_CAM_URL", _DEFAULT_PLATE_CAM_URL).rstrip("/")
+    return _normalize_device_url(os.getenv("PLATE_CAM_URL", _DEFAULT_PLATE_CAM_URL), _DEFAULT_PLATE_CAM_URL)
 
 
 def _fetch_image(url: str):
@@ -86,38 +149,42 @@ def _fetch_image(url: str):
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="index.html")
 
 
 @app.get("/enroll", response_class=HTMLResponse)
 def enroll_page(request: Request):
-    return templates.TemplateResponse("enroll.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="enroll.html")
 
 
 @app.get("/identify", response_class=HTMLResponse)
 def identify_page(request: Request):
-    return templates.TemplateResponse("identify.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="identify.html")
 
 
 @app.get("/plate", response_class=HTMLResponse)
 def plate_page(request: Request):
-    return templates.TemplateResponse("plate.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="plate.html")
 
 
 @app.get("/pipeline", response_class=HTMLResponse)
 def pipeline_page(request: Request):
-    return templates.TemplateResponse("pipeline.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="pipeline.html")
+
+
+@app.get("/debug", response_class=HTMLResponse)
+def debug_page(request: Request):
+    return templates.TemplateResponse(request=request, name="debug.html")
 
 
 @app.get("/dream-dashboard", response_class=HTMLResponse)
 def dream_dashboard_page(request: Request):
-    return templates.TemplateResponse("dream_dashboard.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="dream_dashboard.html")
 
 
 @app.get("/dream-dashboard/student/{student_name}", response_class=HTMLResponse)
 def dream_student_page(request: Request, student_name: str):
-    return templates.TemplateResponse("dream_student.html", {
-        "request": request,
+    return templates.TemplateResponse(request=request, name="dream_student.html", context={
         "student_name": student_name,
     })
 
@@ -127,7 +194,7 @@ _DREAM_PEOPLE = [
     "Arjun", "Meera", "Saanvi", "Dev", "Nikhil", "Tara",
 ]
 _DREAM_HOSTELS = ["Aster", "Nova", "Orion", "Lotus"]
-_DREAM_AVATARS = {
+_DREAM_AVATAR_FALLBACK = {
     "Aarav": "https://randomuser.me/api/portraits/men/11.jpg",
     "Isha": "https://randomuser.me/api/portraits/women/22.jpg",
     "Kabir": "https://randomuser.me/api/portraits/men/33.jpg",
@@ -141,6 +208,24 @@ _DREAM_AVATARS = {
     "Nikhil": "https://randomuser.me/api/portraits/men/53.jpg",
     "Tara": "https://randomuser.me/api/portraits/women/64.jpg",
 }
+
+
+def _dataset_avatar_urls() -> list:
+    if not os.path.isdir(_DATASET_TRAIN_IMAGES_DIR):
+        return []
+
+    allowed_ext = {".jpg", ".jpeg", ".png", ".webp"}
+    files = sorted(
+        f for f in os.listdir(_DATASET_TRAIN_IMAGES_DIR)
+        if os.path.splitext(f)[1].lower() in allowed_ext
+        and os.path.isfile(os.path.join(_DATASET_TRAIN_IMAGES_DIR, f))
+    )
+    return [f"{_DATASET_TRAIN_ROUTE}/{quote(name)}" for name in files]
+
+
+def _dream_avatars() -> dict:
+    # Keep student profile avatars stable and separate from plate-photo records.
+    return _DREAM_AVATAR_FALLBACK
 
 
 def _parse_iso_day(value: Optional[str], fallback: date) -> date:
@@ -166,12 +251,14 @@ def _dream_seed_data() -> tuple:
     hostel_of = {name: _DREAM_HOSTELS[i % len(_DREAM_HOSTELS)] for i, name in enumerate(_DREAM_PEOPLE)}
     person_weights = [1.0 + tendency[p] for p in _DREAM_PEOPLE]
     credit_delta = {"1": -3, "2": -1, "3": 1, "4": 3}
+    avatars = _dream_avatars()
+    dataset_plate_urls = _dataset_avatar_urls()
 
     profiles = {}
     for name in _DREAM_PEOPLE:
         profiles[name] = {
             "name": name,
-            "avatar": _DREAM_AVATARS[name],
+            "avatar": avatars.get(name, _DREAM_AVATAR_FALLBACK.get(name, "")),
             "hostel": hostel_of[name],
             "green_credits": 120,
             "events_total": 0,
@@ -213,7 +300,11 @@ def _dream_seed_data() -> tuple:
                 "category": category,
                 "waste_value": waste_value,
                 "green_credit_delta": credit_delta[category],
-                "plate_photo": f"https://picsum.photos/seed/plate-{day.isoformat()}-{j}/320/220",
+                "plate_photo": (
+                    rng.choice(dataset_plate_urls)
+                    if dataset_plate_urls
+                    else f"https://picsum.photos/seed/plate-{day.isoformat()}-{j}/320/220"
+                ),
             })
             event_id += 1
 
@@ -492,12 +583,82 @@ def api_dream_student(student_name: str, start_date: Optional[str] = None, end_d
 # API – device config (consumed by frontend JS)
 # ---------------------------------------------------------------------------
 
+class ConfigUpdateRequest(BaseModel):
+    esp32_url: Optional[str] = None
+    plate_cam_url: Optional[str] = None
+
+
 @app.get("/api/config")
 def api_config():
     return {
         "esp32_base": _esp32_base(),
         "plate_base": _plate_base(),
     }
+
+
+@app.post("/api/config")
+def api_update_config(data: ConfigUpdateRequest):
+    st = _load_settings()
+    if data.esp32_url is not None and data.esp32_url.strip():
+        val = _normalize_device_url(data.esp32_url, _DEFAULT_ESP32_URL)
+        st["esp32_url"] = val
+        os.environ["ESP32_URL"] = val
+        _update_env_file("ESP32_URL", val)
+
+    if data.plate_cam_url is not None and data.plate_cam_url.strip():
+        val = _normalize_device_url(data.plate_cam_url, _DEFAULT_PLATE_CAM_URL)
+        st["plate_cam_url"] = val
+        os.environ["PLATE_CAM_URL"] = val
+        _update_env_file("PLATE_CAM_URL", val)
+
+    _save_settings(st)
+    return {
+        "success": True,
+        "esp32_base": _esp32_base(),
+        "plate_base": _plate_base(),
+        "message": "Device configuration updated successfully without server restart."
+    }
+
+
+@app.get("/api/ping-device")
+def api_ping_device(target: str = "esp32", custom_url: Optional[str] = None):
+    """Test connectivity to ESP32 or Plate Cam. Can test a custom_url before saving."""
+    if custom_url and custom_url.strip():
+        base_url = _normalize_device_url(custom_url, _DEFAULT_ESP32_URL)
+    else:
+        base_url = _esp32_base() if target == "esp32" else _plate_base()
+
+    start_t = time.time()
+    try:
+        r = _session.get(f"{base_url}/capture", timeout=(2, 3))
+        latency = int((time.time() - start_t) * 1000)
+        return {
+            "online": True,
+            "url": base_url,
+            "status_code": r.status_code,
+            "latency_ms": latency,
+            "message": f"Connected ({latency}ms, status {r.status_code})"
+        }
+    except Exception as e:
+        try:
+            r2 = _session.get(base_url, timeout=(1, 2))
+            latency = int((time.time() - start_t) * 1000)
+            return {
+                "online": True,
+                "url": base_url,
+                "status_code": r2.status_code,
+                "latency_ms": latency,
+                "message": f"Connected ({latency}ms)"
+            }
+        except Exception:
+            latency = int((time.time() - start_t) * 1000)
+            return {
+                "online": False,
+                "url": base_url,
+                "error": str(e),
+                "latency_ms": latency,
+                "message": f"Unreachable ({latency}ms)"
+            }
 
 
 @app.post("/api/flash")
@@ -748,6 +909,46 @@ def _run_reversed_servo_cycle(duration_seconds: int = 4) -> dict:
         "deactivate_state": deactivate_state,
         "duration_seconds": duration_seconds,
     }
+
+
+def _api_debug_servo_action(action: str):
+    """
+    Manual servo control for debug page.
+    Hardware logic is reversed, so:
+    - action=open  -> state=off
+    - action=close -> state=on
+    """
+    action = action.strip().lower()
+    if action not in {"open", "close"}:
+        raise HTTPException(status_code=400, detail="Invalid action. Use open or close.")
+
+    state = "off" if action == "open" else "on"
+    ok, detail = _send_servo_state(state)
+    if not ok:
+        raise HTTPException(status_code=502, detail=f"Servo command failed: {detail}")
+
+    return {
+        "status": "ok",
+        "action": action,
+        "sent_state": state,
+        "detail": detail,
+    }
+
+
+@app.post("/api/debug/servo")
+def api_debug_servo(action: str):
+    # Backward-compatible endpoint using query param action=open|close
+    return _api_debug_servo_action(action)
+
+
+@app.post("/api/debug/servo/open")
+def api_debug_servo_open():
+    return _api_debug_servo_action("open")
+
+
+@app.post("/api/debug/servo/close")
+def api_debug_servo_close():
+    return _api_debug_servo_action("close")
 
 
 # ---------------------------------------------------------------------------

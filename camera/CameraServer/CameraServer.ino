@@ -343,10 +343,10 @@ void setup() {
   Serial.print("           http://");
   Serial.print(WiFi.localIP());
   Serial.println("/stream");
-  Serial.print("           http://");
+  Serial.print("           http://"); 
   Serial.print(WiFi.localIP());
   Serial.println("/flash");
-  Serial.print("           http://");
+  Serial.print("           http://"); 
   Serial.print(WiFi.localIP());
   Serial.println("/servo?state=on or off");
 }

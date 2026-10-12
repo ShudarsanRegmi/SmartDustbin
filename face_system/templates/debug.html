@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Debug - FaceID Dustbin</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <nav class="navbar">
+    <a class="brand" href="/">&#x1F9E0; FaceID</a>
+    <div class="nav-links">
+      <a href="/">Dashboard</a>
+      <a href="/enroll">Enroll</a>
+      <a href="/identify">Identify</a>
+      <a href="/plate">Plate Cam</a>
+      <a href="/pipeline">Pipeline</a>
+      <a href="/debug" class="active">Debug</a>
+      <a href="/dream-dashboard">Dream Analytics</a>
+    </div>
+  </nav>
+
+  <main class="page-container">
+    <div class="page-header">
+      <h1>Debug Console</h1>
+      <p class="subtitle">Quick manual controls for hardware checks. Start with servo lid open/close.</p>
+    </div>
+
+    <!-- ESP32 Connection in Debug -->
+    <div class="card device-connection-card mb-md">
+      <div class="card-header-row">
+        <div>
+          <h2 class="card-title">&#x1F4E1; Target ESP32 Device</h2>
+          <p class="muted small">Commands below are sent to this ESP32. Update it anytime without restarting the server.</p>
+        </div>
+        <div id="dashDeviceStatusBadge" class="status-badge checking">Checking...</div>
+      </div>
+      <div class="device-ip-form mt-sm">
+        <div class="ip-input-group">
+          <span class="ip-protocol">http://</span>
+          <input type="text" id="dashEsp32Input" class="text-input ip-input" placeholder="e.g. 10.177.247.45" oninput="this.dataset.pristine='false'" onkeydown="if(event.key==='Enter') saveEsp32Ip('dash')" />
+        </div>
+        <div class="ip-btn-group">
+          <button type="button" class="btn btn-secondary sm" id="dashPingBtn" onclick="pingEsp32('dash')">&#x1F504; Test Connection</button>
+          <button type="button" class="btn btn-primary sm" id="dashSaveBtn" onclick="saveEsp32Ip('dash')">&#x1F4BE; Save IP</button>
+        </div>
+      </div>
+      <div id="dashDeviceFeedback" class="status-box mt-xs" style="display:none;"></div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">Servo Motor (Lid)</h2>
+      <p class="muted small">Use these buttons to manually command lid open and lid close.</p>
+
+      <div class="cam-controls mt-sm">
+        <button class="btn btn-primary" id="debugLidOpenBtn">Open Lid</button>
+        <button class="btn btn-secondary" id="debugLidCloseBtn">Close Lid</button>
+      </div>
+
+      <div id="debugServoStatus" class="status-box mt-sm" style="display:none;"></div>
+    </div>
+  </main>
+
+  <script src="/static/app.js?v=20260330"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      const openBtn = document.getElementById('debugLidOpenBtn');
+      const closeBtn = document.getElementById('debugLidCloseBtn');
+
+      if (openBtn && typeof window.debugServoAction === 'function') {
+        openBtn.addEventListener('click', function () { window.debugServoAction('open'); });
+      }
+      if (closeBtn && typeof window.debugServoAction === 'function') {
+        closeBtn.addEventListener('click', function () { window.debugServoAction('close'); });
+      }
+    });
+  </script>
+</body>
+</html>

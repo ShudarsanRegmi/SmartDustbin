@@ -15,6 +15,7 @@
       <a href="/identify">Identify</a>
       <a href="/plate">Plate Cam</a>
       <a href="/pipeline">Pipeline</a>
+      <a href="/debug">Debug</a>
       <a href="/dream-dashboard">Dream Analytics</a>
     </div>
   </nav>
@@ -23,6 +24,28 @@
     <div class="page-header">
       <h1>Dashboard</h1>
       <p class="subtitle">ESP32-CAM face recognition system — manage enrolled people and run identification.</p>
+    </div>
+
+    <!-- ESP32 Device Connection & IP Control -->
+    <div class="card device-connection-card mb-md">
+      <div class="card-header-row">
+        <div>
+          <h2 class="card-title">&#x1F4E1; ESP32 Camera Connection</h2>
+          <p class="muted small">Configure your ESP32 IP address directly from UI. Changes apply immediately without restarting the server.</p>
+        </div>
+        <div id="dashDeviceStatusBadge" class="status-badge checking">Checking...</div>
+      </div>
+      <div class="device-ip-form mt-sm">
+        <div class="ip-input-group">
+          <span class="ip-protocol">http://</span>
+          <input type="text" id="dashEsp32Input" class="text-input ip-input" placeholder="e.g. 10.177.247.45" oninput="this.dataset.pristine='false'" onkeydown="if(event.key==='Enter') saveEsp32Ip('dash')" />
+        </div>
+        <div class="ip-btn-group">
+          <button type="button" class="btn btn-secondary sm" id="dashPingBtn" onclick="pingEsp32('dash')">&#x1F504; Test Connection</button>
+          <button type="button" class="btn btn-primary sm" id="dashSaveBtn" onclick="saveEsp32Ip('dash')">&#x1F4BE; Save IP</button>
+        </div>
+      </div>
+      <div id="dashDeviceFeedback" class="status-box mt-xs" style="display:none;"></div>
     </div>
 
     <!-- Quick-action cards -->
@@ -56,6 +79,14 @@
         <div>
           <div class="action-title">Dream Analytics</div>
           <div class="action-desc">Comprehensive mature-product intelligence view</div>
+        </div>
+        <div class="action-arrow">&#x2192;</div>
+      </a>
+      <a href="/debug" class="action-card">
+        <div class="action-icon">&#x1F41B;</div>
+        <div>
+          <div class="action-title">Debug Tools</div>
+          <div class="action-desc">Manual hardware checks like lid open and close</div>
         </div>
         <div class="action-arrow">&#x2192;</div>
       </a>

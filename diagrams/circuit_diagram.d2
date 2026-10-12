@@ -1,0 +1,26 @@
+direction: right
+
+title: "Electronic Circuit Diagram - Smart Dustbin Lid Control"
+
+PSU: "5V Power Supply"
+GND: "Common GND"
+ESP: "ESP32-CAM\n(GPIO13 = CONTROL_GPIO)"
+SERVO: "Servo Motor"
+SIG: "Servo Signal Pin"
+VCC: "Servo VCC"
+SGND: "Servo GND"
+TRIG: "Trigger Sensor/Button\n(active logic as firmware)"
+LID: "Dustbin Lid"
+
+PSU -> VCC: "5V"
+GND -> SGND: "GND"
+
+ESP -> SIG: "GPIO13 control"
+SIG -> SERVO: "PWM/logic"
+VCC -> SERVO: "Power"
+SGND -> SERVO: "Ground"
+
+TRIG -> ESP: "digital input"
+GND -> TRIG: "reference ground"
+
+SERVO -> LID: "mechanical actuation"

@@ -1,0 +1,47 @@
+direction: right
+
+title: "Electronic Circuit - Smart Dustbin Lid + ESP32-CAM Control"
+
+subgraph power "Power"
+  v5: "5V Supply"
+  gnd: "Common GND"
+end
+
+subgraph face "Face ESP32-CAM Node"
+  gpio13: "GPIO13\nCONTROL_GPIO"
+  gpio14: "GPIO14\nSERVO_GPIO (init)"
+  gpio4: "GPIO4\nFlash LED"
+end
+
+subgraph plate "Plate ESP32-CAM Node"
+  pgpio4: "GPIO4\nFlash LED"
+end
+
+subgraph actuator "Actuator"
+  servo_vcc: "Servo VCC"
+  servo_gnd: "Servo GND"
+  servo_sig: "Servo Signal"
+  lid: "Dustbin Lid Linkage"
+end
+
+subgraph control "Control Input"
+  trigger: "Button/Sensor Trigger\n(with pull-up/down in firmware)"
+end
+
+v5 -> servo_vcc: "power"
+gnd -> servo_gnd: "ground"
+
+gpio13 -> servo_sig: "lid control signal"
+servo_sig -> lid: "PWM/logic drive"
+
+trigger -> gpio13: "logical trigger path"
+
+gpio4 -> "Face Cam Flash"
+pgpio4 -> "Plate Cam Flash"
+
+gnd -> gpio13: "reference ground"
+gnd -> gpio14: "reference ground"
+gnd -> trigger: "ground reference"
+
+note: "API layer:\nFace node: /capture /stream /flash /servo\nPlate node: /capture /stream /flash"
+note -> gpio13

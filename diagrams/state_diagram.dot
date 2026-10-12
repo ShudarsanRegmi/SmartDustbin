@@ -1,0 +1,25 @@
+digraph DFA {
+  rankdir=LR;
+  bgcolor="white";
+  node [shape=circle, style=filled, fillcolor="#f5f7ff", color="#2d3a8c", fontname="Helvetica"];
+  edge [color="#334155", fontname="Helvetica"];
+
+  start [shape=point, label=""];
+  q0 [label="q0\nIdle"];
+  q1 [label="q1\nFace Captured"];
+  q2 [label="q2\nFace Recognized"];
+  q3 [label="q3\nPlate Uploaded"];
+  q4 [label="q4\nClassified +\nEvent Stored"];
+  q5 [label="q5\nLid Actuated", peripheries=2, fillcolor="#eafce8", color="#2f7a2f"];
+  qR [label="qR\nReject/Retry", fillcolor="#fff1f2", color="#9f1239"];
+
+  start -> q0;
+  q0 -> q1 [label="capture_face"];
+  q1 -> q2 [label="face_ok"];
+  q1 -> qR [label="face_unknown / no_face"];
+  qR -> q0 [label="retry"];
+  q2 -> q3 [label="plate_upload"];
+  q3 -> q4 [label="classify_done"];
+  q4 -> q5 [label="servo_done"];
+  q5 -> q0 [label="next cycle"];
+}

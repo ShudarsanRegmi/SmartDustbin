@@ -3,7 +3,7 @@
    ============================================================ */
 
 // -----------------------------------------------------------------
-// ESP32 config (loaded once on pages that need the device)
+// ESP32 config & Device IP Management
 // -----------------------------------------------------------------
 let esp32BaseUrl  = null;
 let plateCamUrl   = null;
@@ -17,12 +17,311 @@ async function loadConfig() {
     const data = await res.json();
     esp32BaseUrl = data.esp32_base;
     plateCamUrl  = data.plate_base;
+    updateDeviceUiState(data);
+    return data;
   } catch (e) {
     console.error('Failed to load device config:', e);
   }
 }
 
-// -----------------------------------------------------------------
+function updateDeviceUiState(data) {
+  if (!data) return;
+  const esp32 = data.esp32_base || esp32BaseUrl || '';
+  const plate = data.plate_base || plateCamUrl || '';
+
+  const displayIp = esp32.replace(/^https?:\/\//, '').replace(/\/.*$/, '') || 'Not configured';
+  const navLabel = document.getElementById('navDeviceLabel');
+  if (navLabel) {
+    navLabel.textContent = `ESP32: ${displayIp}`;
+  }
+
+  // Fill Dashboard input if empty or pristine
+  const dashInput = document.getElementById('dashEsp32Input');
+  if (dashInput && (!dashInput.value || dashInput.dataset.pristine !== 'false')) {
+    dashInput.value = displayIp;
+    dashInput.dataset.pristine = 'true';
+  }
+
+  // Fill Modal inputs
+  const modalEsp32Input = document.getElementById('modalEsp32Input');
+  if (modalEsp32Input) modalEsp32Input.value = esp32;
+
+  const modalPlateInput = document.getElementById('modalPlateInput');
+  if (modalPlateInput) modalPlateInput.value = plate;
+}
+
+function openDeviceSettingsModal() {
+  ensureDeviceModalExists();
+  const modal = document.getElementById('deviceSettingsModal');
+  if (!modal) return;
+
+  const modalEsp32 = document.getElementById('modalEsp32Input');
+  const modalPlate = document.getElementById('modalPlateInput');
+  if (modalEsp32 && esp32BaseUrl) modalEsp32.value = esp32BaseUrl;
+  if (modalPlate && plateCamUrl) modalPlate.value = plateCamUrl;
+
+  const feedback = document.getElementById('modalFeedback');
+  if (feedback) feedback.style.display = 'none';
+
+  modal.style.display = 'flex';
+  if (modalEsp32) modalEsp32.focus();
+}
+
+function closeDeviceSettingsModal() {
+  const modal = document.getElementById('deviceSettingsModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function handleModalBackdropClick(e) {
+  if (e.target && e.target.id === 'deviceSettingsModal') {
+    closeDeviceSettingsModal();
+  }
+}
+
+async function pingEsp32(source = 'modal', showLoading = true) {
+  let targetUrl = '';
+  if (source === 'dash') {
+    const input = document.getElementById('dashEsp32Input');
+    if (input) targetUrl = input.value.trim();
+  } else {
+    const input = document.getElementById('modalEsp32Input');
+    if (input) targetUrl = input.value.trim();
+  }
+
+  const statusBadge = document.getElementById('dashDeviceStatusBadge');
+  const statusText = document.getElementById('modalEsp32PingStatus');
+  const navDot = document.getElementById('navDeviceDot');
+
+  if (source === 'dash' && statusBadge && showLoading) {
+    statusBadge.className = 'status-badge checking';
+    statusBadge.textContent = 'Testing connection...';
+  } else if (statusText && showLoading) {
+    statusText.textContent = 'Testing connection...';
+    statusText.style.color = 'var(--warning)';
+  }
+
+  try {
+    let url = '/api/ping-device?target=esp32';
+    if (targetUrl) url += '&custom_url=' + encodeURIComponent(targetUrl);
+    const res = await fetch(url);
+    const result = await res.json();
+
+    if (result.online) {
+      if (source === 'dash' && statusBadge) {
+        statusBadge.className = 'status-badge ok';
+        statusBadge.textContent = `Online (${result.latency_ms}ms)`;
+      }
+      if (statusText) {
+        statusText.textContent = `Online (${result.latency_ms}ms, HTTP ${result.status_code})`;
+        statusText.style.color = 'var(--success)';
+      }
+      if (navDot) navDot.className = 'status-indicator-dot online';
+    } else {
+      if (source === 'dash' && statusBadge) {
+        statusBadge.className = 'status-badge error';
+        statusBadge.textContent = 'Offline / Unreachable';
+      }
+      if (statusText) {
+        statusText.textContent = `Unreachable: ${result.message || 'Timeout'}`;
+        statusText.style.color = 'var(--danger)';
+      }
+      if (navDot) navDot.className = 'status-indicator-dot offline';
+    }
+  } catch (err) {
+    if (source === 'dash' && statusBadge) {
+      statusBadge.className = 'status-badge error';
+      statusBadge.textContent = 'Ping failed';
+    }
+    if (statusText) {
+      statusText.textContent = 'Ping request failed';
+      statusText.style.color = 'var(--danger)';
+    }
+  }
+}
+
+async function pingPlate(source = 'modal') {
+  const input = document.getElementById('modalPlateInput');
+  const statusText = document.getElementById('modalPlatePingStatus');
+  let targetUrl = input ? input.value.trim() : '';
+
+  if (statusText) {
+    statusText.textContent = 'Testing connection...';
+    statusText.style.color = 'var(--warning)';
+  }
+
+  try {
+    let url = '/api/ping-device?target=plate';
+    if (targetUrl) url += '&custom_url=' + encodeURIComponent(targetUrl);
+    const res = await fetch(url);
+    const result = await res.json();
+
+    if (result.online) {
+      if (statusText) {
+        statusText.textContent = `Online (${result.latency_ms}ms)`;
+        statusText.style.color = 'var(--success)';
+      }
+    } else {
+      if (statusText) {
+        statusText.textContent = 'Unreachable';
+        statusText.style.color = 'var(--danger)';
+      }
+    }
+  } catch (err) {
+    if (statusText) {
+      statusText.textContent = 'Ping request failed';
+      statusText.style.color = 'var(--danger)';
+    }
+  }
+}
+
+async function saveEsp32Ip(source = 'modal') {
+  let esp32Val = '';
+  let plateVal = '';
+
+  if (source === 'dash') {
+    const input = document.getElementById('dashEsp32Input');
+    if (input) esp32Val = input.value.trim();
+  } else {
+    const input = document.getElementById('modalEsp32Input');
+    if (input) esp32Val = input.value.trim();
+    const plateInput = document.getElementById('modalPlateInput');
+    if (plateInput) plateVal = plateInput.value.trim();
+  }
+
+  if (!esp32Val && !plateVal) {
+    showDeviceFeedback(source, 'Please enter a valid IP address or URL.', 'error');
+    return;
+  }
+
+  showDeviceFeedback(source, 'Saving configuration...', 'loading');
+
+  try {
+    const payload = {};
+    if (esp32Val) payload.esp32_url = esp32Val;
+    if (plateVal) payload.plate_cam_url = plateVal;
+
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const result = await res.json();
+    if (!res.ok) {
+      throw new Error(result.detail || result.message || 'Failed to save configuration');
+    }
+
+    esp32BaseUrl = result.esp32_base;
+    plateCamUrl = result.plate_base;
+    updateDeviceUiState(result);
+
+    showDeviceFeedback(source, 'Saved! Live immediately (no server restart needed)', 'success');
+
+    if (streamActive) {
+      const streamImg = document.getElementById('streamImg');
+      if (streamImg) streamImg.src = esp32BaseUrl + '/stream?' + Date.now();
+    }
+
+    pingEsp32(source, false);
+
+    if (source === 'modal') {
+      setTimeout(() => {
+        closeDeviceSettingsModal();
+      }, 1300);
+    }
+  } catch (err) {
+    showDeviceFeedback(source, 'Error: ' + err.message, 'error');
+  }
+}
+
+function showDeviceFeedback(source, message, type) {
+  const box = source === 'dash'
+    ? document.getElementById('dashDeviceFeedback')
+    : document.getElementById('modalFeedback');
+  if (!box) return;
+
+  box.style.display = 'block';
+  box.className = `status-box ${type} mt-xs`;
+  box.textContent = message;
+}
+
+function ensureDeviceModalExists() {
+  if (document.getElementById('deviceSettingsModal')) return;
+
+  const modalHtml = `
+  <div id="deviceSettingsModal" class="modal-backdrop" style="display:none;" onclick="handleModalBackdropClick(event)">
+    <div class="modal-box" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 class="modal-title">&#x2699;&#xFE0F; Device Network Settings</h3>
+        <button class="modal-close" type="button" onclick="closeDeviceSettingsModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted small mb-sm">Update the ESP32 IP anytime directly from UI. Changes apply immediately without server restart.</p>
+        
+        <div class="form-group mb-sm">
+          <label class="field-label" for="modalEsp32Input">ESP32 Camera / Servo IP or URL</label>
+          <div class="input-with-ping">
+            <input type="text" id="modalEsp32Input" class="text-input" placeholder="e.g. 10.177.247.45 or http://10.177.247.45" />
+            <button type="button" class="btn btn-secondary sm" id="modalPingEsp32Btn" onclick="pingEsp32('modal')">&#x1F504; Test</button>
+          </div>
+          <div id="modalEsp32PingStatus" class="small muted mt-xs"></div>
+        </div>
+
+        <div class="form-group mb-sm">
+          <label class="field-label" for="modalPlateInput">Plate Camera IP or URL (Optional)</label>
+          <div class="input-with-ping">
+            <input type="text" id="modalPlateInput" class="text-input" placeholder="e.g. 11.12.23.199 or http://11.12.23.199" />
+            <button type="button" class="btn btn-secondary sm" id="modalPingPlateBtn" onclick="pingPlate('modal')">&#x1F504; Test</button>
+          </div>
+          <div id="modalPlatePingStatus" class="small muted mt-xs"></div>
+        </div>
+
+        <div id="modalFeedback" class="status-box mt-xs" style="display:none;"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" onclick="closeDeviceSettingsModal()">Cancel</button>
+        <button type="button" class="btn btn-primary" id="modalSaveBtn" onclick="saveEsp32Ip('modal')">&#x1F4BE; Save & Apply</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+}
+
+function initGlobalDeviceUI() {
+  ensureDeviceModalExists();
+
+  const navbar = document.querySelector('.navbar');
+  if (navbar && !document.getElementById('navDeviceBtn')) {
+    const navRight = document.createElement('div');
+    navRight.className = 'nav-right';
+    navRight.innerHTML = `
+      <button id="navDeviceBtn" class="nav-device-btn" type="button" onclick="openDeviceSettingsModal()" title="Click to view or change ESP32 IP">
+        <span class="status-indicator-dot" id="navDeviceDot"></span>
+        <span id="navDeviceLabel">ESP32 IP</span>
+        <span class="nav-device-gear">&#x2699;&#xFE0F;</span>
+      </button>
+    `;
+    navbar.appendChild(navRight);
+  }
+
+  loadConfig().then(() => {
+    pingEsp32('dash', false);
+  });
+}
+
+// Expose functions on window for inline handlers
+window.loadConfig = loadConfig;
+window.openDeviceSettingsModal = openDeviceSettingsModal;
+window.closeDeviceSettingsModal = closeDeviceSettingsModal;
+window.handleModalBackdropClick = handleModalBackdropClick;
+window.pingEsp32 = pingEsp32;
+window.pingPlate = pingPlate;
+window.saveEsp32Ip = saveEsp32Ip;
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initGlobalDeviceUI);
+} else {
+  initGlobalDeviceUI();
+}
 // Live stream toggle
 // -----------------------------------------------------------------
 let streamActive = false;
@@ -893,6 +1192,39 @@ async function loadPipelineAnalytics() {
   }
 }
 
+// -----------------------------------------------------------------
+// Debug page
+// -----------------------------------------------------------------
+async function debugServoAction(action) {
+  const statusBox = document.getElementById('debugServoStatus');
+  const openBtn = document.getElementById('debugLidOpenBtn');
+  const closeBtn = document.getElementById('debugLidCloseBtn');
+  const btn = action === 'open' ? openBtn : closeBtn;
+
+  if (!btn) return;
+
+  setLoading(btn, true);
+  setStatus(statusBox, 'loading', (action === 'open' ? 'Opening' : 'Closing') + ' lid...');
+
+  try {
+    const endpoint = action === 'open' ? '/api/debug/servo/open' : '/api/debug/servo/close';
+    const res = await fetch(endpoint, { method: 'POST' });
+    const data = await res.json();
+
+    if (!res.ok) {
+      setStatus(statusBox, 'error', 'Servo command failed: ' + (data.detail || 'Unknown error'));
+      return;
+    }
+
+    const sent = data.sent_state ? ' (sent state=' + data.sent_state + ')' : '';
+    setStatus(statusBox, 'success', 'Lid ' + action + ' command sent successfully' + sent + '.');
+  } catch (err) {
+    setStatus(statusBox, 'error', 'Network error: ' + err.message);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
 // Explicitly expose pipeline hooks for pages that bind handlers dynamically.
 if (typeof window !== 'undefined') {
   window.pipelineStart = pipelineStart;
@@ -900,4 +1232,5 @@ if (typeof window !== 'undefined') {
   window.loadPipelineAnalytics = loadPipelineAnalytics;
   window.pipelineSwitchTab = pipelineSwitchTab;
   window.pipelineHandlePlateSelection = pipelineHandlePlateSelection;
+  window.debugServoAction = debugServoAction;
 }
