@@ -20,7 +20,7 @@ void loop() {
 
   if (state == LOW) {
     // Triggered (button pressed / sensor active)
-    myservo.write(180);   // open lid
+    myservo.write(210);   // open lid
   } else {
     // Default state
     myservo.write(0);     // close lid  

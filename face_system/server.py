@@ -17,6 +17,7 @@ from datetime import date, timedelta
 from urllib.parse import quote, quote_plus
 from dotenv import load_dotenv
 from pydantic import BaseModel
+from concurrent.futures import ThreadPoolExecutor
 
 load_dotenv(override=True)
 
@@ -27,6 +28,7 @@ import shutil
 # Defaults only — actual values always come from .env via os.getenv() at call time
 _DEFAULT_ESP32_URL      = "http://10.144.234.241"
 _DEFAULT_PLATE_CAM_URL  = "http://10.144.234.246:8080"
+DEFAULT_LID_OPEN_DURATION = 5
 SETTINGS_FILE  = "face_db/settings.json"
 PROFILES_FILE  = "face_db/profiles.json"
 PHOTOS_DIR     = "face_db/photos"
@@ -204,6 +206,50 @@ def _get_plate_stream_url(base: str) -> str:
     if ":8080" in clean or "shot" in clean:
         return f"{clean}/video"
     return f"{clean}/stream"
+
+
+def _lid_open_duration() -> int:
+    """Get configured lid open duration in seconds (default: 5 seconds)."""
+    st = _load_settings()
+    try:
+        val = int(st.get("lid_open_duration", DEFAULT_LID_OPEN_DURATION))
+        return max(1, min(60, val))
+    except Exception:
+        return DEFAULT_LID_OPEN_DURATION
+
+
+def _fetch_both_cameras_parallel():
+    """
+    Simultaneously trigger and fetch captures from Face Camera (ESP32)
+    and Plate Camera (Phone IP Webcam / ESP32) in parallel.
+    Returns (face_img, face_raw), (plate_img, plate_raw), face_err, plate_err
+    """
+    face_res = None
+    plate_res = None
+    face_err = None
+    plate_err = None
+
+    def _fetch_face():
+        return _fetch_image(f"{_esp32_base()}/capture")
+
+    def _fetch_plate():
+        return _fetch_plate_image()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        fut_face = executor.submit(_fetch_face)
+        fut_plate = executor.submit(_fetch_plate)
+
+        try:
+            face_res = fut_face.result()
+        except Exception as e:
+            face_err = e
+
+        try:
+            plate_res = fut_plate.result()
+        except Exception as e:
+            plate_err = e
+
+    return face_res, plate_res, face_err, plate_err
 
 
 
@@ -650,6 +696,7 @@ def api_dream_student(student_name: str, start_date: Optional[str] = None, end_d
 class ConfigUpdateRequest(BaseModel):
     esp32_url: Optional[str] = None
     plate_cam_url: Optional[str] = None
+    lid_open_duration: Optional[int] = None
 
 
 @app.get("/api/config")
@@ -659,6 +706,7 @@ def api_config():
         "esp32_base": _esp32_base(),
         "plate_base": p_base,
         "plate_stream_url": _get_plate_stream_url(p_base),
+        "lid_open_duration": _lid_open_duration(),
     }
 
 
@@ -677,6 +725,10 @@ def api_update_config(data: ConfigUpdateRequest):
         os.environ["PLATE_CAM_URL"] = val
         _update_env_file("PLATE_CAM_URL", val)
 
+    if data.lid_open_duration is not None:
+        duration_val = max(1, min(60, int(data.lid_open_duration)))
+        st["lid_open_duration"] = duration_val
+
     _save_settings(st)
     p_base = _plate_base()
     return {
@@ -684,6 +736,7 @@ def api_update_config(data: ConfigUpdateRequest):
         "esp32_base": _esp32_base(),
         "plate_base": p_base,
         "plate_stream_url": _get_plate_stream_url(p_base),
+        "lid_open_duration": _lid_open_duration(),
         "message": "Device configuration updated successfully without server restart."
     }
 
@@ -1020,12 +1073,15 @@ def _send_servo_state(state: str):
         return False, str(e)
 
 
-def _run_reversed_servo_cycle(duration_seconds: int = 4) -> dict:
+def _run_reversed_servo_cycle(duration_seconds: Optional[int] = None) -> dict:
     """
     Hardware logic is reversed:
-    - state=off means physical ON
-    - state=on means physical OFF
+    - state=off means physical ON (lid opened)
+    - state=on means physical OFF (lid closed)
     """
+    if duration_seconds is None or duration_seconds <= 0:
+        duration_seconds = _lid_open_duration()
+
     activate_state = "off"
     deactivate_state = "on"
 
@@ -1038,7 +1094,7 @@ def _run_reversed_servo_cycle(duration_seconds: int = 4) -> dict:
             "activate_state": activate_state,
             "deactivate_state": deactivate_state,
             "duration_seconds": duration_seconds,
-            "detail": f"Servo lid trigger commanded (Physical servo offline: {detail_on})",
+            "detail": f"Servo lid trigger commanded ({duration_seconds}s hold, Physical servo offline: {detail_on})",
         }
 
     time.sleep(duration_seconds)
@@ -1051,7 +1107,7 @@ def _run_reversed_servo_cycle(duration_seconds: int = 4) -> dict:
             "activate_state": activate_state,
             "deactivate_state": deactivate_state,
             "duration_seconds": duration_seconds,
-            "detail": f"Servo activate succeeded, deactivate failed: {detail_off}",
+            "detail": f"Servo open succeeded, close failed after {duration_seconds}s: {detail_off}",
         }
 
     return {
@@ -1060,7 +1116,7 @@ def _run_reversed_servo_cycle(duration_seconds: int = 4) -> dict:
         "activate_state": activate_state,
         "deactivate_state": deactivate_state,
         "duration_seconds": duration_seconds,
-        "detail": "Servo lid opened and closed (4s cycle)",
+        "detail": f"Servo lid opened and closed ({duration_seconds}s cycle)",
     }
 
 
@@ -1166,7 +1222,7 @@ def api_pipeline_upload_plate(
 ):
     """
     Upload a plate photo, classify waste (temporary random class 1-4),
-    store event for analytics, and run servo for 4 seconds using reversed logic.
+    store event for analytics, and run servo for configured duration using reversed logic.
     """
     person = person.strip()
     if not person:
@@ -1191,7 +1247,8 @@ def api_pipeline_upload_plate(
         fh.write(raw)
 
     waste_category = random.randint(1, 4)
-    servo = _run_reversed_servo_cycle(duration_seconds=4)
+    duration_sec = _lid_open_duration()
+    servo = _run_reversed_servo_cycle(duration_seconds=duration_sec)
 
     event = record_pipeline_event({
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -1201,12 +1258,14 @@ def api_pipeline_upload_plate(
         "plate_photo": f"/api/pipeline/plate_photo/{filename}",
         "waste_category": waste_category,
         "servo": servo,
+        "lid_duration": servo.get("duration_seconds", duration_sec),
     })
 
     return {
         "status": "completed",
         "event": event,
-        "message": "Pipeline completed and saved for analytics.",
+        "lid_duration": servo.get("duration_seconds", duration_sec),
+        "message": f"Pipeline completed. Lid held open for {servo.get('duration_seconds', duration_sec)}s.",
     }
 
 
@@ -1218,7 +1277,7 @@ def api_pipeline_capture_plate(
 ):
     """
     Directly capture plate from the configured plate camera (Phone IP Webcam or ESP32),
-    classify waste, store event, and trigger servo cycle.
+    classify waste, store event, and trigger servo cycle for configured duration.
     """
     person = person.strip()
     if not person:
@@ -1235,7 +1294,8 @@ def api_pipeline_capture_plate(
         fh.write(raw)
 
     waste_category = random.randint(1, 4)
-    servo = _run_reversed_servo_cycle(duration_seconds=4)
+    duration_sec = _lid_open_duration()
+    servo = _run_reversed_servo_cycle(duration_seconds=duration_sec)
 
     event = record_pipeline_event({
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -1245,6 +1305,7 @@ def api_pipeline_capture_plate(
         "plate_photo": f"/api/pipeline/plate_photo/{filename}",
         "waste_category": waste_category,
         "servo": servo,
+        "lid_duration": servo.get("duration_seconds", duration_sec),
     })
 
     encoded = base64.b64encode(raw).decode()
@@ -1252,27 +1313,28 @@ def api_pipeline_capture_plate(
         "status": "completed",
         "event": event,
         "image": f"data:image/jpeg;base64,{encoded}",
-        "message": f"Plate captured from camera & waste class {waste_category} logged.",
+        "lid_duration": servo.get("duration_seconds", duration_sec),
+        "message": f"Plate captured & waste class {waste_category} logged. Lid held open {servo.get('duration_seconds', duration_sec)}s.",
     }
 
 
-@app.post("/api/pipeline/auto_run")
-def api_pipeline_auto_run():
+def _execute_parallel_pipeline():
     """
-    Fully automated pipeline execution in one request:
-    1. Capture face from ESP32 Face Cam & recognize member.
-    2. If recognized, capture plate from Plate Cam (Phone IP Webcam / ESP32).
-    3. Classify waste & actuate servo lid cycle (4s).
-    4. Save event for analytics.
+    Fully automated & simultaneous parallel pipeline execution:
+    1. Triggers both Face Cam (ESP32) and Plate Cam (Phone / ESP32) at the exact same time.
+    2. Recognizes face from Face Cam.
+    3. If recognized, stores both full images, classifies waste, and actuates servo lid for configured duration.
+    4. Records comprehensive event log for analytics.
     """
-    try:
-        img, raw_face = _fetch_image(f"{_esp32_base()}/capture")
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Face camera unreachable: {e}")
+    face_res, plate_res, face_err, plate_err = _fetch_both_cameras_parallel()
 
-    emb = extract_embedding(img)
+    if face_err:
+        raise HTTPException(status_code=502, detail=f"Face camera unreachable: {face_err}")
+
+    img_face, raw_face = face_res
     encoded_face = base64.b64encode(raw_face).decode()
 
+    emb = extract_embedding(img_face)
     if emb is None:
         return {
             "status": "no_face",
@@ -1291,35 +1353,45 @@ def api_pipeline_auto_run():
 
     confidence = round(max(0.0, (THRESHOLD - score) / THRESHOLD) * 100, 1)
 
+    if plate_err:
+        raise HTTPException(status_code=502, detail=f"Plate camera unreachable: {plate_err}")
+
+    _plate_img, raw_plate = plate_res
+    encoded_plate = base64.b64encode(raw_plate).decode()
+
     ts = time.strftime("%Y%m%d_%H%M%S")
     ms = int(time.time() * 1000) % 1000
 
-    face_filename = f"face_{ts}_{ms:03d}.jpg"
     os.makedirs(PIPELINE_PLATES_DIR, exist_ok=True)
-    with open(os.path.join(PIPELINE_PLATES_DIR, face_filename), "wb") as fh:
+
+    # Save full face image
+    face_filename = f"face_{ts}_{ms:03d}.jpg"
+    face_filepath = os.path.join(PIPELINE_PLATES_DIR, face_filename)
+    with open(face_filepath, "wb") as fh:
         fh.write(raw_face)
     face_photo_url = f"/api/pipeline/plate_photo/{face_filename}"
 
-    plate_img, raw_plate = _fetch_plate_image()
-    filename = f"{ts}_{ms:03d}.jpg"
-    filepath = os.path.join(PIPELINE_PLATES_DIR, filename)
-    with open(filepath, "wb") as fh:
+    # Save full plate image
+    plate_filename = f"{ts}_{ms:03d}.jpg"
+    plate_filepath = os.path.join(PIPELINE_PLATES_DIR, plate_filename)
+    with open(plate_filepath, "wb") as fh:
         fh.write(raw_plate)
+    plate_photo_url = f"/api/pipeline/plate_photo/{plate_filename}"
 
     waste_category = random.randint(1, 4)
-    servo = _run_reversed_servo_cycle(duration_seconds=4)
+    duration_sec = _lid_open_duration()
+    servo = _run_reversed_servo_cycle(duration_seconds=duration_sec)
 
     event = record_pipeline_event({
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "person": name,
         "face_score": round(float(score), 4),
         "face_photo": face_photo_url,
-        "plate_photo": f"/api/pipeline/plate_photo/{filename}",
+        "plate_photo": plate_photo_url,
         "waste_category": waste_category,
         "servo": servo,
+        "lid_duration": servo.get("duration_seconds", duration_sec),
     })
-
-    encoded_plate = base64.b64encode(raw_plate).decode()
 
     return {
         "status": "completed",
@@ -1330,9 +1402,20 @@ def api_pipeline_auto_run():
         "plate_image": f"data:image/jpeg;base64,{encoded_plate}",
         "waste_category": waste_category,
         "servo": servo,
+        "lid_duration": servo.get("duration_seconds", duration_sec),
         "event": event,
-        "message": f"Successfully processed {name}. Waste category {waste_category} logged. Servo lid cycle executed.",
+        "message": f"Parallel capture complete! {name} recognized, category {waste_category} logged. Lid held open for {servo.get('duration_seconds', duration_sec)}s.",
     }
+
+
+@app.post("/api/pipeline/auto_run")
+def api_pipeline_auto_run():
+    return _execute_parallel_pipeline()
+
+
+@app.post("/api/pipeline/parallel_run")
+def api_pipeline_parallel_run():
+    return _execute_parallel_pipeline()
 
 
 

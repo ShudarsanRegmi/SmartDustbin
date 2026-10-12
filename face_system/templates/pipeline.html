@@ -52,6 +52,13 @@
             <span>🔁 Continuous Loop (Kiosk Mode)</span>
           </label>
         </div>
+        <div class="pipeline-duration-setting" title="Configure how long the dustbin lid stays open after classification">
+          <label for="pipelineLidDurationInput" style="display:inline-flex; align-items:center; gap:0.4rem; font-size:0.85rem; color:var(--text-muted); cursor:pointer;">
+            <span>⏱️ Lid Open:</span>
+            <input type="number" id="pipelineLidDurationInput" class="text-input" min="1" max="60" value="5" style="width:58px; padding:0.2rem 0.4rem; text-align:center; font-size:0.85rem;" onchange="updatePipelineLidDuration(this.value)" />
+            <span>sec</span>
+          </label>
+        </div>
       </div>
     </div>
 
@@ -188,6 +195,26 @@
         </div>
       </div>
     </section>
+
+    <!-- Full Pipeline Run Detail Modal -->
+    <div id="pipelineRunDetailModal" class="modal-backdrop" style="display:none;" onclick="handleRunDetailBackdropClick(event)">
+      <div class="modal-box modal-box-large" onclick="event.stopPropagation()">
+        <div class="modal-header">
+          <div style="display:flex; align-items:center; gap:0.6rem;">
+            <span class="run-id-badge" id="modalRunIdBadge">#RUN</span>
+            <h3 class="modal-title" style="margin:0;">Pipeline Run Inspection</h3>
+          </div>
+          <button class="modal-close" type="button" onclick="closePipelineRunDetail()">&times;</button>
+        </div>
+        <div class="modal-body" id="pipelineRunDetailContent">
+          <!-- Populated dynamically by app.js -->
+        </div>
+        <div class="modal-footer" style="justify-content:space-between; align-items:center;">
+          <span class="small muted" id="modalRunFooterMeta"></span>
+          <button type="button" class="btn btn-secondary sm" onclick="closePipelineRunDetail()">Close</button>
+        </div>
+      </div>
+    </div>
   </main>
 
   <script src="/static/app.js?v=20260325"></script>

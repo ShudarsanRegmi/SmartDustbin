@@ -50,7 +50,29 @@ function updateDeviceUiState(data) {
 
   const modalPlateInput = document.getElementById('modalPlateInput');
   if (modalPlateInput) modalPlateInput.value = plate;
+
+  // Fill Pipeline lid duration input
+  const durInput = document.getElementById('pipelineLidDurationInput');
+  if (durInput && data.lid_open_duration) {
+    durInput.value = data.lid_open_duration;
+  }
 }
+
+async function updatePipelineLidDuration(val) {
+  const duration = parseInt(val, 10);
+  if (isNaN(duration) || duration < 1 || duration > 60) return;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lid_open_duration: duration }),
+    });
+    if (!res.ok) throw new Error('Failed to save lid duration');
+  } catch (e) {
+    console.error('Failed to update lid duration:', e);
+  }
+}
+window.updatePipelineLidDuration = updatePipelineLidDuration;
 
 function openDeviceSettingsModal() {
   ensureDeviceModalExists();
@@ -990,6 +1012,7 @@ let pipelineAutoLoopActive = false;
 let pipelineLoopTimeoutId = null;
 let pipelineCountdownIntervalId = null;
 let pipelineIsRunning = false;
+let _pipelineEventsCache = [];
 
 function setPipelineStep(step) {
   for (let i = 1; i <= 4; i++) {
@@ -1173,6 +1196,163 @@ function pipelineResetUi() {
 
 async function pipelineStart() {
   if (pipelineIsRunning) return;
+  if (pipelineMode === 'auto') {
+    return pipelineStartParallel();
+  }
+  return pipelineStartManual();
+}
+
+async function pipelineStartParallel() {
+  pipelineIsRunning = true;
+
+  const btn = document.getElementById('pipelineStartBtn');
+  const faceStatusBox = document.getElementById('pipelineFaceStatus');
+  const plateStatusBox = document.getElementById('pipelinePlateStatus');
+  const facePreviewImg = document.getElementById('pipelineFaceImg');
+  const facePlaceholder = document.getElementById('pipelineFacePlaceholder');
+  const platePreviewImg = document.getElementById('pipelinePlateImg');
+  const platePlaceholder = document.getElementById('pipelinePlatePlaceholder');
+  const personWrap = document.getElementById('pipelinePersonWrap');
+  const personName = document.getElementById('pipelinePersonName');
+  const readyNote = document.getElementById('pipelineReadyNote');
+  const successCard = document.getElementById('pipelineSuccessCard');
+  const stopBtn = document.getElementById('pipelineStopLoopBtn');
+
+  if (stopBtn) stopBtn.style.display = pipelineAutoLoopActive ? 'inline-block' : 'none';
+  if (successCard) successCard.style.display = 'none';
+  if (readyNote) readyNote.style.display = 'none';
+
+  setPipelineStep(1);
+  setLoading(btn, true);
+  setStatus(faceStatusBox, 'loading', '⚡ Capturing Face & Plate cameras in parallel...');
+  if (plateStatusBox) setStatus(plateStatusBox, 'loading', '⚡ Dual-camera parallel acquisition in progress...');
+
+  try {
+    const res = await fetch('/api/pipeline/parallel_run', { method: 'POST' });
+    const data = await res.json();
+
+    if (!res.ok) {
+      const errMsg = data.detail || 'Camera offline or capture failed';
+      setStatus(faceStatusBox, 'error', 'Parallel capture failed: ' + errMsg);
+      if (plateStatusBox) setStatus(plateStatusBox, 'error', 'Error: ' + errMsg);
+      pipelineRecognizedPerson = null;
+      pipelineIsRunning = false;
+      if (pipelineAutoLoopActive) {
+        pipelineLoopTimeoutId = setTimeout(() => { pipelineStart(); }, 3500);
+      }
+      return;
+    }
+
+    // Display face image if returned
+    if (data.face_image && facePreviewImg) {
+      facePreviewImg.src = data.face_image;
+      facePreviewImg.style.display = 'block';
+      if (facePlaceholder) facePlaceholder.style.display = 'none';
+    }
+
+    // Display plate image if returned
+    if (data.plate_image && platePreviewImg) {
+      platePreviewImg.src = data.plate_image;
+      platePreviewImg.style.display = 'block';
+      if (platePlaceholder) platePlaceholder.style.display = 'none';
+    }
+
+    if (data.status === 'completed') {
+      pipelineRecognizedPerson = data.person;
+      pipelineFaceScore = data.score;
+      pipelineFacePhoto = data.event ? data.event.face_photo : null;
+
+      const conf = data.confidence ? ` (${data.confidence}% confidence)` : '';
+      setStatus(faceStatusBox, 'success', `✓ Recognized: ${data.person}${conf}`);
+      if (personName) personName.textContent = 'Recognized: ' + data.person;
+      if (personWrap) personWrap.style.display = '';
+
+      const wasteCat = data.waste_category || '?';
+      const duration = data.lid_duration || (data.servo && data.servo.duration_seconds) || 5;
+      if (plateStatusBox) {
+        setStatus(plateStatusBox, 'success', `✓ Plate logged! Waste Category: ${wasteCat}. Lid open: ${duration}s.`);
+      }
+
+      setPipelineStep(4);
+
+      // Show completion card
+      if (successCard && data.event) {
+        successCard.style.display = 'block';
+        const sumStudent = document.getElementById('pipelineSummaryStudent');
+        const sumWaste = document.getElementById('pipelineSummaryWaste');
+        const sumServo = document.getElementById('pipelineSummaryServo');
+        const sumTime = document.getElementById('pipelineSummaryTime');
+        if (sumStudent) sumStudent.textContent = data.person;
+        if (sumWaste) sumWaste.textContent = `Category ${wasteCat}`;
+        if (sumServo) sumServo.textContent = `✓ Lid held open for ${duration}s`;
+        if (sumTime) sumTime.textContent = data.event.timestamp;
+      }
+
+      // Refresh analytics logs in background
+      if (typeof loadPipelineAnalytics === 'function') {
+        loadPipelineAnalytics();
+      }
+
+      // Auto cooldown / loop countdown
+      let secondsLeft = Math.max(3, duration);
+      if (readyNote) {
+        readyNote.style.display = 'block';
+        readyNote.textContent = pipelineAutoLoopActive
+          ? `🔁 Auto-loop: Next scan in ${secondsLeft}s...`
+          : `Pipeline complete! Resetting in ${secondsLeft}s...`;
+      }
+
+      if (pipelineCountdownIntervalId) clearInterval(pipelineCountdownIntervalId);
+      pipelineCountdownIntervalId = setInterval(() => {
+        secondsLeft -= 1;
+        if (secondsLeft > 0) {
+          if (readyNote) {
+            readyNote.textContent = pipelineAutoLoopActive
+              ? `🔁 Auto-loop: Next scan in ${secondsLeft}s...`
+              : `Pipeline complete! Resetting in ${secondsLeft}s...`;
+          }
+        } else {
+          clearInterval(pipelineCountdownIntervalId);
+          pipelineCountdownIntervalId = null;
+          pipelineResetUi();
+          if (pipelineAutoLoopActive) {
+            pipelineStart();
+          }
+        }
+      }, 1000);
+
+    } else if (data.status === 'unknown') {
+      pipelineRecognizedPerson = null;
+      setStatus(faceStatusBox, 'error', 'Face detected but not enrolled in database.');
+      if (plateStatusBox) setStatus(plateStatusBox, 'error', 'Lid actuation skipped (Unknown member).');
+      pipelineIsRunning = false;
+      if (pipelineAutoLoopActive) {
+        pipelineLoopTimeoutId = setTimeout(() => { pipelineStart(); }, 3000);
+      }
+    } else {
+      pipelineRecognizedPerson = null;
+      setStatus(faceStatusBox, 'error', data.message || 'No face detected in camera view.');
+      if (plateStatusBox) setStatus(plateStatusBox, 'error', 'Lid actuation skipped.');
+      pipelineIsRunning = false;
+      if (pipelineAutoLoopActive) {
+        pipelineLoopTimeoutId = setTimeout(() => { pipelineStart(); }, 2500);
+      }
+    }
+
+  } catch (err) {
+    setStatus(faceStatusBox, 'error', 'Network error: ' + err.message);
+    if (plateStatusBox) setStatus(plateStatusBox, 'error', 'Network error: ' + err.message);
+    pipelineRecognizedPerson = null;
+    pipelineIsRunning = false;
+    if (pipelineAutoLoopActive) {
+      pipelineLoopTimeoutId = setTimeout(() => { pipelineStart(); }, 3500);
+    }
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function pipelineStartManual() {
   pipelineIsRunning = true;
 
   const btn = document.getElementById('pipelineStartBtn');
@@ -1184,13 +1364,9 @@ async function pipelineStart() {
   const uploadBtn = document.getElementById('pipelineUploadBtn');
   const camBtn = document.getElementById('pipelineCaptureCameraBtn');
   const uploadHint = document.getElementById('pipelineUploadHint');
-  const readyNote = document.getElementById('pipelineReadyNote');
   const successCard = document.getElementById('pipelineSuccessCard');
-  const stopBtn = document.getElementById('pipelineStopLoopBtn');
 
-  if (stopBtn) stopBtn.style.display = pipelineAutoLoopActive ? 'inline-block' : 'none';
   if (successCard) successCard.style.display = 'none';
-  if (readyNote) readyNote.style.display = 'none';
 
   setPipelineStep(1);
   setLoading(btn, true);
@@ -1205,9 +1381,6 @@ async function pipelineStart() {
       pipelineRecognizedPerson = null;
       pipelineFaceScore = null;
       pipelineIsRunning = false;
-      if (pipelineAutoLoopActive) {
-        pipelineLoopTimeoutId = setTimeout(() => { pipelineStart(); }, 3000);
-      }
       return;
     }
 
@@ -1228,18 +1401,7 @@ async function pipelineStart() {
       if (uploadBtn) uploadBtn.disabled = false;
       if (camBtn) camBtn.disabled = false;
       if (uploadHint) uploadHint.style.display = 'none';
-
       setPipelineStep(2);
-
-      // In Automated Mode: Automatically proceed to Plate Capture + Classification + Servo
-      if (pipelineMode === 'auto') {
-        setStatus(statusBox, 'success', `✓ ${data.person} identified! Auto-capturing plate photo from Plate Cam...`);
-        // Smooth visual transition
-        setTimeout(() => {
-          pipelineCaptureFromCamera(true);
-        }, 350);
-        return;
-      }
     } else if (data.status === 'unknown') {
       pipelineRecognizedPerson = null;
       pipelineFaceScore = data.score;
@@ -1248,11 +1410,6 @@ async function pipelineStart() {
       if (uploadBtn) uploadBtn.disabled = true;
       if (camBtn) camBtn.disabled = true;
       if (uploadHint) uploadHint.textContent = 'Recognition failed. Please enroll this member first.';
-      pipelineIsRunning = false;
-      if (pipelineAutoLoopActive) {
-        setStatus(statusBox, 'error', 'Face not enrolled. Scanning again in 3 seconds...');
-        pipelineLoopTimeoutId = setTimeout(() => { pipelineStart(); }, 3000);
-      }
     } else {
       pipelineRecognizedPerson = null;
       pipelineFaceScore = null;
@@ -1260,24 +1417,14 @@ async function pipelineStart() {
       if (personWrap) personWrap.style.display = 'none';
       if (uploadBtn) uploadBtn.disabled = true;
       if (camBtn) camBtn.disabled = true;
-      pipelineIsRunning = false;
-      if (pipelineAutoLoopActive) {
-        pipelineLoopTimeoutId = setTimeout(() => { pipelineStart(); }, 2500);
-      }
     }
   } catch (err) {
     setStatus(statusBox, 'error', 'Network error: ' + err.message);
     pipelineRecognizedPerson = null;
     pipelineFaceScore = null;
-    pipelineIsRunning = false;
-    if (pipelineAutoLoopActive) {
-      pipelineLoopTimeoutId = setTimeout(() => { pipelineStart(); }, 3500);
-    }
   } finally {
     setLoading(btn, false);
-    if (pipelineMode === 'manual') {
-      pipelineIsRunning = false;
-    }
+    pipelineIsRunning = false;
   }
 }
 
@@ -1476,11 +1623,12 @@ function renderPipelineRunCard(ev) {
   const scoreText = (ev.face_score !== null && ev.face_score !== undefined)
     ? `Match Score: ${Number(ev.face_score).toFixed(3)}`
     : 'Verified Member';
+  const duration = ev.lid_duration || (ev.servo && ev.servo.duration_seconds) || 5;
 
   // 1. Face media
   let faceMediaHtml = '';
   if (ev.face_photo) {
-    faceMediaHtml = `<img class="timeline-run-thumb" src="${escHtml(ev.face_photo)}" alt="Face" title="Click to view face photo" onclick="viewPhoto('${escHtml(ev.face_photo)}',1,1)" />`;
+    faceMediaHtml = `<img class="timeline-run-thumb" src="${escHtml(ev.face_photo)}" alt="Face" title="Click to view face photo" onclick="event.stopPropagation(); viewPhoto('${escHtml(ev.face_photo)}',1,1)" />`;
   } else {
     const initial = who.charAt(0).toUpperCase();
     faceMediaHtml = `<div class="timeline-avatar-circle" title="Enrolled: ${who}">${initial}</div>`;
@@ -1489,7 +1637,7 @@ function renderPipelineRunCard(ev) {
   // 2. Plate media & Waste category
   let plateMediaHtml = '';
   if (ev.plate_photo) {
-    plateMediaHtml = `<img class="timeline-run-thumb" src="${escHtml(ev.plate_photo)}" alt="Plate" title="Click to view plate photo" onclick="viewPhoto('${escHtml(ev.plate_photo)}',1,1)" />`;
+    plateMediaHtml = `<img class="timeline-run-thumb" src="${escHtml(ev.plate_photo)}" alt="Plate" title="Click to view plate photo" onclick="event.stopPropagation(); viewPhoto('${escHtml(ev.plate_photo)}',1,1)" />`;
   } else {
     plateMediaHtml = `<div class="timeline-avatar-circle" style="background:rgba(255,255,255,0.06); font-size:1.1rem;">🍽️</div>`;
   }
@@ -1517,22 +1665,25 @@ function renderPipelineRunCard(ev) {
 
   if (servoStatus === 'cycled' && isPhysical) {
     servoTagHtml = `<span class="servo-tag cycled">✓ Physical Lid Cycled</span>`;
-    servoSub = 'Lid opened & closed (4s cycle)';
+    servoSub = `Lid opened & held for ${duration}s`;
   } else {
     // When servo setup is not attached / not responding
     servoTagHtml = `<span class="servo-tag commanded">⚡ Lid Trigger Commanded</span>`;
-    servoSub = 'Lid open cycle signaled (Hardware pending)';
+    servoSub = `Lid hold signaled (${duration}s)`;
   }
 
   return `
-    <div class="pipeline-run-card">
+    <div class="pipeline-run-card" onclick="openPipelineRunDetail('${escHtml(String(ev.id))}')" title="Click to inspect run details & full size photos">
       <div class="pipeline-run-header">
         <div class="run-header-left">
           <span class="run-id-badge">#RUN-${displayId}</span>
           <span class="pipeline-pill" style="font-size:0.8rem; padding:0.2rem 0.6rem;">👤 ${who}</span>
           <span class="run-time">📅 ${when}</span>
         </div>
-        <div class="run-status-pill">✓ Pipeline Executed</div>
+        <div style="display:flex; align-items:center; gap:0.5rem;">
+          <span class="run-click-hint">🔍 View Details</span>
+          <div class="run-status-pill">✓ Pipeline Executed</div>
+        </div>
       </div>
 
       <div class="run-timeline">
@@ -1578,7 +1729,7 @@ function renderPipelineRunCard(ev) {
           <div class="stage-content">
             <div class="stage-title">3. Servo Lid Actuation</div>
             <div class="stage-media-wrap">
-              <div class="timeline-servo-box" title="Servo lid 4s cycle">
+              <div class="timeline-servo-box" title="Servo lid ${duration}s hold">
                 <span style="font-size:1.1rem;">🗑️🔓</span>
               </div>
               <div style="min-width:0;">
@@ -1591,6 +1742,148 @@ function renderPipelineRunCard(ev) {
       </div>
     </div>
   `;
+}
+
+function openPipelineRunDetail(id) {
+  const ev = _pipelineEventsCache.find(e => String(e.id) === String(id));
+  if (!ev) return;
+
+  const modal = document.getElementById('pipelineRunDetailModal');
+  const badge = document.getElementById('modalRunIdBadge');
+  const content = document.getElementById('pipelineRunDetailContent');
+  const footerMeta = document.getElementById('modalRunFooterMeta');
+  if (!modal || !content) return;
+
+  const who = ev.person ? escHtml(ev.person) : 'Unknown Member';
+  const when = ev.timestamp ? escHtml(ev.timestamp) : '';
+  const rawId = ev.id || 'RUN';
+  const displayId = escHtml(String(rawId).slice(-11));
+  const duration = ev.lid_duration || (ev.servo && ev.servo.duration_seconds) || 5;
+  const isPhysical = ev.servo && ev.servo.physical === true;
+  const isCycled = ev.servo && ev.servo.status === 'cycled';
+
+  if (badge) badge.textContent = `#RUN-${displayId}`;
+  if (footerMeta) footerMeta.textContent = `Timestamp: ${when}`;
+
+  // Waste category badge
+  const catNum = parseInt(ev.waste_category, 10);
+  let wasteBadgeHtml = '';
+  if (catNum === 1) {
+    wasteBadgeHtml = `<span class="waste-tag cat-1" style="font-size:0.85rem; padding:0.3rem 0.75rem;">🔴 Category 1 (Max Waste)</span>`;
+  } else if (catNum === 2) {
+    wasteBadgeHtml = `<span class="waste-tag cat-2" style="font-size:0.85rem; padding:0.3rem 0.75rem;">🟠 Category 2 (High Waste)</span>`;
+  } else if (catNum === 3) {
+    wasteBadgeHtml = `<span class="waste-tag cat-3" style="font-size:0.85rem; padding:0.3rem 0.75rem;">🟡 Category 3 (Moderate Waste)</span>`;
+  } else if (catNum === 4) {
+    wasteBadgeHtml = `<span class="waste-tag cat-4" style="font-size:0.85rem; padding:0.3rem 0.75rem;">🟢 Category 4 (Minimal / Clean)</span>`;
+  } else {
+    wasteBadgeHtml = `<span class="waste-tag" style="font-size:0.85rem; padding:0.3rem 0.75rem;">Category ${escHtml(String(ev.waste_category || '?'))}</span>`;
+  }
+
+  // Servo Lid Actuation Banner
+  let servoBannerHtml = '';
+  if (isCycled && isPhysical) {
+    servoBannerHtml = `
+      <div class="run-detail-meta-banner">
+        <div style="display:flex; align-items:center; gap:0.75rem;">
+          <span style="font-size:1.6rem;">🗑️🔓</span>
+          <div>
+            <div style="font-weight:700; color:var(--success); font-size:1.02rem;">✓ Physical Lid Cycled (Opened &amp; Closed)</div>
+            <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.15rem;">
+              The dustbin lid was opened and held open for <strong style="color:#fff;">${duration} seconds</strong> before closing.
+            </div>
+          </div>
+        </div>
+        <span class="status-badge ok" style="font-size:0.85rem; padding:0.35rem 0.75rem;">Held Open: ${duration}s</span>
+      </div>
+    `;
+  } else {
+    servoBannerHtml = `
+      <div class="run-detail-meta-banner pending">
+        <div style="display:flex; align-items:center; gap:0.75rem;">
+          <span style="font-size:1.6rem;">⚡</span>
+          <div>
+            <div style="font-weight:700; color:var(--warning); font-size:1.02rem;">Lid Cycle Commanded</div>
+            <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.15rem;">
+              Commanded lid to stay open for <strong style="color:#fff;">${duration} seconds</strong> (${escHtml(ev.servo?.detail || 'Signaled')}).
+            </div>
+          </div>
+        </div>
+        <span class="status-badge warn" style="font-size:0.85rem; padding:0.35rem 0.75rem;">Hold Signaled: ${duration}s</span>
+      </div>
+    `;
+  }
+
+  const scoreStr = (ev.face_score !== null && ev.face_score !== undefined)
+    ? `Match Score (L2): ${Number(ev.face_score).toFixed(3)}`
+    : 'Verified Member';
+
+  const faceImgUrl = ev.face_photo || '';
+  const plateImgUrl = ev.plate_photo || '';
+
+  content.innerHTML = `
+    ${servoBannerHtml}
+
+    <div class="run-detail-pill-row mb-sm">
+      <span class="pipeline-pill" style="font-size:0.88rem; padding:0.3rem 0.75rem;">👤 ${who}</span>
+      ${wasteBadgeHtml}
+      <span class="run-id-badge" style="font-size:0.82rem; padding:0.3rem 0.6rem;">⏱️ Lid Open: ${duration}s</span>
+      <span class="small muted" style="margin-left:auto;">📅 ${when}</span>
+    </div>
+
+    <div class="run-detail-grid">
+      <!-- Face Camera Image Card -->
+      <div class="run-detail-image-card">
+        <div class="run-detail-image-title">
+          <span>👤 Face Camera Snapshot</span>
+          <span class="small muted">${scoreStr}</span>
+        </div>
+        <div class="run-detail-img-wrap">
+          ${faceImgUrl
+            ? `<img class="run-detail-img" src="${escHtml(faceImgUrl)}" alt="Full Face Photo" onclick="window.open('${escHtml(faceImgUrl)}', '_blank')" title="Click to view full original image" />`
+            : `<div class="muted small" style="padding:2rem;">No face image recorded</div>`
+          }
+        </div>
+        ${faceImgUrl ? `<a href="${escHtml(faceImgUrl)}" target="_blank" class="small muted" style="text-align:center; text-decoration:none;">🔍 Open Full Size Image ↗</a>` : ''}
+      </div>
+
+      <!-- Plate Camera Image Card -->
+      <div class="run-detail-image-card">
+        <div class="run-detail-image-title">
+          <span>🍽️ Plate Camera Snapshot</span>
+          <span class="small muted">Waste Class: ${escHtml(String(ev.waste_category || '?'))}</span>
+        </div>
+        <div class="run-detail-img-wrap">
+          ${plateImgUrl
+            ? `<img class="run-detail-img" src="${escHtml(plateImgUrl)}" alt="Full Plate Photo" onclick="window.open('${escHtml(plateImgUrl)}', '_blank')" title="Click to view full original image" />`
+            : `<div class="muted small" style="padding:2rem;">No plate image recorded</div>`
+          }
+        </div>
+        ${plateImgUrl ? `<a href="${escHtml(plateImgUrl)}" target="_blank" class="small muted" style="text-align:center; text-decoration:none;">🔍 Open Full Size Image ↗</a>` : ''}
+      </div>
+    </div>
+  `;
+
+  modal.style.display = 'flex';
+}
+
+function closePipelineRunDetail() {
+  const modal = document.getElementById('pipelineRunDetailModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function handleRunDetailBackdropClick(e) {
+  if (e.target && e.target.id === 'pipelineRunDetailModal') {
+    closePipelineRunDetail();
+  }
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closePipelineRunDetail();
+    }
+  });
 }
 
 async function loadPipelineAnalytics() {
@@ -1619,6 +1912,8 @@ async function loadPipelineAnalytics() {
     `;
 
     const events = eventsData.events || [];
+    _pipelineEventsCache = events;
+
     if (events.length === 0) {
       list.innerHTML = '<p class="muted">No pipeline runs logged yet.</p>';
       return;
@@ -1672,4 +1967,8 @@ if (typeof window !== 'undefined') {
   window.pipelineSwitchTab = pipelineSwitchTab;
   window.pipelineHandlePlateSelection = pipelineHandlePlateSelection;
   window.debugServoAction = debugServoAction;
+  window.openPipelineRunDetail = openPipelineRunDetail;
+  window.closePipelineRunDetail = closePipelineRunDetail;
+  window.handleRunDetailBackdropClick = handleRunDetailBackdropClick;
 }
+
