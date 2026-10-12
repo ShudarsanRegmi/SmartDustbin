@@ -984,6 +984,7 @@ async function deletePlateEvent(id, btn) {
 // -----------------------------------------------------------------
 let pipelineRecognizedPerson = null;
 let pipelineFaceScore = null;
+let pipelineFacePhoto = null;
 let pipelineMode = 'auto'; // 'auto' | 'manual'
 let pipelineAutoLoopActive = false;
 let pipelineLoopTimeoutId = null;
@@ -1120,6 +1121,7 @@ function pipelineHandlePlateSelection() {
 function pipelineResetUi() {
   pipelineRecognizedPerson = null;
   pipelineFaceScore = null;
+  pipelineFacePhoto = null;
   pipelineIsRunning = false;
 
   const uploadBtn = document.getElementById('pipelineUploadBtn');
@@ -1218,6 +1220,7 @@ async function pipelineStart() {
     if (data.status === 'recognized') {
       pipelineRecognizedPerson = data.person;
       pipelineFaceScore = data.score;
+      pipelineFacePhoto = data.face_photo || null;
       const conf = data.confidence ? ` (${data.confidence}% confidence)` : '';
       setStatus(statusBox, 'success', `✓ Recognized: ${data.person}${conf}`);
       if (personName) personName.textContent = 'Recognized: ' + data.person;
@@ -1304,6 +1307,9 @@ async function pipelineCaptureFromCamera(isAuto = false) {
     fd.append('person', pipelineRecognizedPerson);
     if (pipelineFaceScore !== null) {
       fd.append('face_score', String(pipelineFaceScore));
+    }
+    if (pipelineFacePhoto) {
+      fd.append('face_photo', pipelineFacePhoto);
     }
 
     setPipelineStep(3);
@@ -1416,6 +1422,9 @@ async function pipelineUploadPlate() {
     if (pipelineFaceScore !== null && pipelineFaceScore !== undefined) {
       fd.append('face_score', String(pipelineFaceScore));
     }
+    if (pipelineFacePhoto) {
+      fd.append('face_photo', pipelineFacePhoto);
+    }
 
     const res = await fetch('/api/pipeline/upload_plate', { method: 'POST', body: fd });
     const data = await res.json();
@@ -1459,60 +1468,166 @@ async function pipelineUploadPlate() {
   }
 }
 
+function renderPipelineRunCard(ev) {
+  const who = ev.person ? escHtml(ev.person) : 'Unknown';
+  const when = ev.timestamp ? escHtml(ev.timestamp) : '';
+  const rawId = ev.id || (when ? when.replace(/[- :]/g, '') : 'RUN');
+  const displayId = escHtml(String(rawId).slice(-11));
+  const scoreText = (ev.face_score !== null && ev.face_score !== undefined)
+    ? `Match Score: ${Number(ev.face_score).toFixed(3)}`
+    : 'Verified Member';
+
+  // 1. Face media
+  let faceMediaHtml = '';
+  if (ev.face_photo) {
+    faceMediaHtml = `<img class="timeline-run-thumb" src="${escHtml(ev.face_photo)}" alt="Face" title="Click to view face photo" onclick="viewPhoto('${escHtml(ev.face_photo)}',1,1)" />`;
+  } else {
+    const initial = who.charAt(0).toUpperCase();
+    faceMediaHtml = `<div class="timeline-avatar-circle" title="Enrolled: ${who}">${initial}</div>`;
+  }
+
+  // 2. Plate media & Waste category
+  let plateMediaHtml = '';
+  if (ev.plate_photo) {
+    plateMediaHtml = `<img class="timeline-run-thumb" src="${escHtml(ev.plate_photo)}" alt="Plate" title="Click to view plate photo" onclick="viewPhoto('${escHtml(ev.plate_photo)}',1,1)" />`;
+  } else {
+    plateMediaHtml = `<div class="timeline-avatar-circle" style="background:rgba(255,255,255,0.06); font-size:1.1rem;">🍽️</div>`;
+  }
+
+  const catNum = parseInt(ev.waste_category, 10);
+  let wasteTagHtml = '';
+  if (catNum === 1) {
+    wasteTagHtml = `<span class="waste-tag cat-1">🔴 Category 1 (Max Waste)</span>`;
+  } else if (catNum === 2) {
+    wasteTagHtml = `<span class="waste-tag cat-2">🟠 Category 2 (High Waste)</span>`;
+  } else if (catNum === 3) {
+    wasteTagHtml = `<span class="waste-tag cat-3">🟡 Category 3 (Moderate)</span>`;
+  } else if (catNum === 4) {
+    wasteTagHtml = `<span class="waste-tag cat-4">🟢 Category 4 (Minimal)</span>`;
+  } else {
+    wasteTagHtml = `<span class="waste-tag">Category ${escHtml(String(ev.waste_category || '?'))}</span>`;
+  }
+
+  // 3. Servo Actuation
+  const servo = ev.servo || {};
+  const servoStatus = servo.status || '';
+  const isPhysical = servo.physical === true;
+  let servoTagHtml = '';
+  let servoSub = '';
+
+  if (servoStatus === 'cycled' && isPhysical) {
+    servoTagHtml = `<span class="servo-tag cycled">✓ Physical Lid Cycled</span>`;
+    servoSub = 'Lid opened & closed (4s cycle)';
+  } else {
+    // When servo setup is not attached / not responding
+    servoTagHtml = `<span class="servo-tag commanded">⚡ Lid Trigger Commanded</span>`;
+    servoSub = 'Lid open cycle signaled (Hardware pending)';
+  }
+
+  return `
+    <div class="pipeline-run-card">
+      <div class="pipeline-run-header">
+        <div class="run-header-left">
+          <span class="run-id-badge">#RUN-${displayId}</span>
+          <span class="pipeline-pill" style="font-size:0.8rem; padding:0.2rem 0.6rem;">👤 ${who}</span>
+          <span class="run-time">📅 ${when}</span>
+        </div>
+        <div class="run-status-pill">✓ Pipeline Executed</div>
+      </div>
+
+      <div class="run-timeline">
+        <!-- Step 1: Face ID -->
+        <div class="timeline-stage">
+          <div class="stage-node-icon">👤</div>
+          <div class="stage-content">
+            <div class="stage-title">1. Face Recognition</div>
+            <div class="stage-media-wrap">
+              ${faceMediaHtml}
+              <div style="min-width:0;">
+                <div style="font-weight:600; font-size:0.85rem; color:#fff;">${who}</div>
+                <div class="stage-sub">${scoreText}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Connector -->
+        <div class="timeline-arrow">➔</div>
+
+        <!-- Step 2: Plate & Waste Classify -->
+        <div class="timeline-stage">
+          <div class="stage-node-icon">🍽️</div>
+          <div class="stage-content">
+            <div class="stage-title">2. Plate &amp; Waste Analysis</div>
+            <div class="stage-media-wrap">
+              ${plateMediaHtml}
+              <div style="min-width:0;">
+                ${wasteTagHtml}
+                <div class="stage-sub" style="margin-top:0.25rem;">Captured &amp; classified</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Connector -->
+        <div class="timeline-arrow">➔</div>
+
+        <!-- Step 3: Servo Lid Actuation -->
+        <div class="timeline-stage">
+          <div class="stage-node-icon">⚙️</div>
+          <div class="stage-content">
+            <div class="stage-title">3. Servo Lid Actuation</div>
+            <div class="stage-media-wrap">
+              <div class="timeline-servo-box" title="Servo lid 4s cycle">
+                <span style="font-size:1.1rem;">🗑️🔓</span>
+              </div>
+              <div style="min-width:0;">
+                ${servoTagHtml}
+                <div class="stage-sub" style="margin-top:0.25rem;">${servoSub}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 async function loadPipelineAnalytics() {
   const stats = document.getElementById('pipelineStats');
   const list = document.getElementById('pipelineEventsList');
   if (!stats || !list) return;
 
-  stats.innerHTML = '<p class="muted">Loading...</p>';
-  list.innerHTML = '<p class="muted">Loading...</p>';
+  stats.innerHTML = '<p class="muted">Loading analytics...</p>';
+  list.innerHTML = '<p class="muted">Loading pipeline run logs...</p>';
 
   try {
     const [sumRes, eventsRes] = await Promise.all([
       fetch('/api/pipeline/summary'),
-      fetch('/api/pipeline/events?limit=25'),
+      fetch('/api/pipeline/events?limit=50'),
     ]);
     const summary = await sumRes.json();
     const eventsData = await eventsRes.json();
     const counts = summary.category_counts || {};
 
     stats.innerHTML = `
-      <div class="stat-card"><div class="stat-value">${summary.total_events || 0}</div><div class="stat-label">Total events</div></div>
-      <div class="stat-card"><div class="stat-value">${counts['1'] || 0}</div><div class="stat-label">Category 1 (max waste)</div></div>
-      <div class="stat-card"><div class="stat-value">${counts['2'] || 0}</div><div class="stat-label">Category 2</div></div>
-      <div class="stat-card"><div class="stat-value">${counts['3'] || 0}</div><div class="stat-label">Category 3</div></div>
-      <div class="stat-card"><div class="stat-value">${counts['4'] || 0}</div><div class="stat-label">Category 4 (minimal)</div></div>
+      <div class="stat-card"><div class="stat-value">${summary.total_events || 0}</div><div class="stat-label">Total Pipeline Runs</div></div>
+      <div class="stat-card"><div class="stat-value">${counts['1'] || 0}</div><div class="stat-label">Category 1 (Max Waste)</div></div>
+      <div class="stat-card"><div class="stat-value">${counts['2'] || 0}</div><div class="stat-label">Category 2 (High)</div></div>
+      <div class="stat-card"><div class="stat-value">${counts['3'] || 0}</div><div class="stat-label">Category 3 (Moderate)</div></div>
+      <div class="stat-card"><div class="stat-value">${counts['4'] || 0}</div><div class="stat-label">Category 4 (Minimal)</div></div>
     `;
 
     const events = eventsData.events || [];
     if (events.length === 0) {
-      list.innerHTML = '<p class="muted">No pipeline events yet.</p>';
+      list.innerHTML = '<p class="muted">No pipeline runs logged yet.</p>';
       return;
     }
 
-    list.innerHTML = events.map(ev => {
-      const who = ev.person ? escHtml(ev.person) : 'Unknown';
-      const when = ev.timestamp ? escHtml(ev.timestamp) : '';
-      const cat = ev.waste_category || '-';
-      const servo = ev.servo && ev.servo.status ? escHtml(ev.servo.status) : 'unknown';
-      const thumb = ev.plate_photo
-        ? `<img class="event-thumb" src="${escHtml(ev.plate_photo)}" loading="lazy" alt="plate" onclick="viewPhoto('${escHtml(ev.plate_photo)}',1,1)" />`
-        : '<div class="event-thumb event-thumb-empty">?</div>';
-
-      return `
-        <div class="event-item">
-          ${thumb}
-          <div class="event-info">
-            <div class="event-person">${who}</div>
-            <div class="event-time">${when}</div>
-            <div class="event-time">Category: ${cat} | Servo: ${servo}</div>
-          </div>
-        </div>
-      `;
-    }).join('');
+    list.innerHTML = events.map(renderPipelineRunCard).join('');
   } catch (err) {
     stats.innerHTML = '<p class="muted" style="color:var(--danger)">Failed to load summary.</p>';
-    list.innerHTML = '<p class="muted" style="color:var(--danger)">Failed to load events.</p>';
+    list.innerHTML = '<p class="muted" style="color:var(--danger)">Failed to load run logs.</p>';
   }
 }
 

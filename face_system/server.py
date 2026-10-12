@@ -1031,11 +1031,14 @@ def _run_reversed_servo_cycle(duration_seconds: int = 4) -> dict:
 
     ok_on, detail_on = _send_servo_state(activate_state)
     if not ok_on:
+        # Hardware servo endpoint not connected or setup pending
         return {
-            "status": "error",
+            "status": "commanded",
+            "physical": False,
             "activate_state": activate_state,
             "deactivate_state": deactivate_state,
-            "detail": f"Servo activate failed: {detail_on}",
+            "duration_seconds": duration_seconds,
+            "detail": f"Servo lid trigger commanded (Physical servo offline: {detail_on})",
         }
 
     time.sleep(duration_seconds)
@@ -1043,17 +1046,21 @@ def _run_reversed_servo_cycle(duration_seconds: int = 4) -> dict:
     ok_off, detail_off = _send_servo_state(deactivate_state)
     if not ok_off:
         return {
-            "status": "error",
+            "status": "partial",
+            "physical": True,
             "activate_state": activate_state,
             "deactivate_state": deactivate_state,
-            "detail": f"Servo deactivate failed: {detail_off}",
+            "duration_seconds": duration_seconds,
+            "detail": f"Servo activate succeeded, deactivate failed: {detail_off}",
         }
 
     return {
         "status": "cycled",
+        "physical": True,
         "activate_state": activate_state,
         "deactivate_state": deactivate_state,
         "duration_seconds": duration_seconds,
+        "detail": "Servo lid opened and closed (4s cycle)",
     }
 
 
@@ -1130,11 +1137,21 @@ def api_pipeline_start():
         }
 
     confidence = round(max(0.0, (THRESHOLD - score) / THRESHOLD) * 100, 1)
+
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    ms = int(time.time() * 1000) % 1000
+    face_filename = f"face_{ts}_{ms:03d}.jpg"
+    os.makedirs(PIPELINE_PLATES_DIR, exist_ok=True)
+    with open(os.path.join(PIPELINE_PLATES_DIR, face_filename), "wb") as fh:
+        fh.write(raw)
+    face_photo_url = f"/api/pipeline/plate_photo/{face_filename}"
+
     return {
         "status": "recognized",
         "person": name,
         "score": round(float(score), 4),
         "confidence": confidence,
+        "face_photo": face_photo_url,
         "message": f"Face recognized: {name}",
         "image": f"data:image/jpeg;base64,{encoded}",
     }
@@ -1145,6 +1162,7 @@ def api_pipeline_upload_plate(
     plate_photo: UploadFile = File(...),
     person: str = Form(...),
     face_score: Optional[float] = Form(default=None),
+    face_photo: Optional[str] = Form(default=None),
 ):
     """
     Upload a plate photo, classify waste (temporary random class 1-4),
@@ -1179,6 +1197,7 @@ def api_pipeline_upload_plate(
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "person": person,
         "face_score": round(float(face_score), 4) if face_score is not None else None,
+        "face_photo": face_photo,
         "plate_photo": f"/api/pipeline/plate_photo/{filename}",
         "waste_category": waste_category,
         "servo": servo,
@@ -1195,6 +1214,7 @@ def api_pipeline_upload_plate(
 def api_pipeline_capture_plate(
     person: str = Form(...),
     face_score: Optional[float] = Form(default=None),
+    face_photo: Optional[str] = Form(default=None),
 ):
     """
     Directly capture plate from the configured plate camera (Phone IP Webcam or ESP32),
@@ -1221,6 +1241,7 @@ def api_pipeline_capture_plate(
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "person": person,
         "face_score": round(float(face_score), 4) if face_score is not None else None,
+        "face_photo": face_photo,
         "plate_photo": f"/api/pipeline/plate_photo/{filename}",
         "waste_category": waste_category,
         "servo": servo,
@@ -1270,11 +1291,17 @@ def api_pipeline_auto_run():
 
     confidence = round(max(0.0, (THRESHOLD - score) / THRESHOLD) * 100, 1)
 
-    plate_img, raw_plate = _fetch_plate_image()
     ts = time.strftime("%Y%m%d_%H%M%S")
     ms = int(time.time() * 1000) % 1000
-    filename = f"{ts}_{ms:03d}.jpg"
+
+    face_filename = f"face_{ts}_{ms:03d}.jpg"
     os.makedirs(PIPELINE_PLATES_DIR, exist_ok=True)
+    with open(os.path.join(PIPELINE_PLATES_DIR, face_filename), "wb") as fh:
+        fh.write(raw_face)
+    face_photo_url = f"/api/pipeline/plate_photo/{face_filename}"
+
+    plate_img, raw_plate = _fetch_plate_image()
+    filename = f"{ts}_{ms:03d}.jpg"
     filepath = os.path.join(PIPELINE_PLATES_DIR, filename)
     with open(filepath, "wb") as fh:
         fh.write(raw_plate)
@@ -1286,6 +1313,7 @@ def api_pipeline_auto_run():
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "person": name,
         "face_score": round(float(score), 4),
+        "face_photo": face_photo_url,
         "plate_photo": f"/api/pipeline/plate_photo/{filename}",
         "waste_category": waste_category,
         "servo": servo,

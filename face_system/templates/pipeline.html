@@ -30,7 +30,7 @@
         </div>
         <div class="pipeline-tabs" id="pipelineTabs">
           <button class="pipeline-tab active" id="pipelineTabRunBtn" data-tab="run">Run Pipeline</button>
-          <button class="pipeline-tab" id="pipelineTabAnalyticsBtn" data-tab="analytics">Analytics</button>
+          <button class="pipeline-tab" id="pipelineTabAnalyticsBtn" data-tab="analytics">&#x1F4CB; Run Logs &amp; Analytics</button>
         </div>
       </div>
 
@@ -175,13 +175,16 @@
 
     <section id="pipelineAnalyticsTab" style="display:none;">
       <div class="card pipeline-analytics-card">
-        <div class="card-header-row">
-          <h2 class="card-title">Pipeline Analytics Snapshot</h2>
-          <button class="btn btn-ghost sm" id="pipelineRefreshBtn">Refresh</button>
+        <div class="card-header-row" style="align-items:flex-start;">
+          <div>
+            <h2 class="card-title">&#x1F4DC; Pipeline Run Logs &amp; Audit Trail</h2>
+            <p class="muted small mt-xs">Visual 3-stage execution timeline per pipeline cycle: Face ID &rarr; Plate &amp; Waste &rarr; Servo Lid Actuation.</p>
+          </div>
+          <button class="btn btn-ghost sm" id="pipelineRefreshBtn">&#x21BA; Refresh Logs</button>
         </div>
-        <div class="pipeline-stats" id="pipelineStats"></div>
-        <div class="event-list mt-sm" id="pipelineEventsList">
-          <p class="muted">Loading...</p>
+        <div class="pipeline-stats mt-xs" id="pipelineStats"></div>
+        <div class="pipeline-logs-list" id="pipelineEventsList">
+          <p class="muted">Loading pipeline run logs...</p>
         </div>
       </div>
     </section>
