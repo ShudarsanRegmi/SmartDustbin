@@ -7,6 +7,7 @@
 // -----------------------------------------------------------------
 let esp32BaseUrl  = null;
 let plateCamUrl   = null;
+let plateStreamUrl = null;
 
 // Store last identified person so Plate Cam page can autofill it
 let _lastIdentifiedPerson = null;
@@ -17,6 +18,7 @@ async function loadConfig() {
     const data = await res.json();
     esp32BaseUrl = data.esp32_base;
     plateCamUrl  = data.plate_base;
+    plateStreamUrl = data.plate_stream_url || (plateCamUrl ? (plateCamUrl.includes(':8080') ? plateCamUrl + '/video' : plateCamUrl + '/stream') : '');
     updateDeviceUiState(data);
     return data;
   } catch (e) {
@@ -755,7 +757,8 @@ function togglePlateStream() {
   if (plateStreamActive) {
     if (previewImg)  previewImg.style.display  = 'none';
     if (placeholder) placeholder.style.display = 'none';
-    streamImg.src           = plateCamUrl + '/stream';
+    const activeStreamSrc = plateStreamUrl || (plateCamUrl.includes(':8080') ? plateCamUrl + '/video' : plateCamUrl + '/stream');
+    streamImg.src           = activeStreamSrc;
     streamImg.style.display = 'block';
     btn.innerHTML = '&#x23F9; Stop Stream';
     btn.classList.replace('btn-secondary', 'btn-primary');
@@ -791,6 +794,69 @@ async function togglePlateFlash() {
     alert('Flash control failed: ' + e.message);
   } finally {
     setLoading(btn, false);
+  }
+}
+
+async function loadPlateCamSettings() {
+  const bar = document.getElementById('plateCamSettingsBar');
+  const resSelect = document.getElementById('plateResolutionSelect');
+  const qualSelect = document.getElementById('plateQualitySelect');
+  if (!bar || !resSelect || !qualSelect) return;
+
+  try {
+    const res = await fetch('/api/plate/settings');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.supported) {
+      bar.style.display = 'block';
+      if (data.video_size) {
+        if (![...resSelect.options].some(o => o.value === data.video_size)) {
+          const opt = document.createElement('option');
+          opt.value = data.video_size;
+          opt.textContent = `${data.video_size} (Active)`;
+          resSelect.appendChild(opt);
+        }
+        resSelect.value = data.video_size;
+      }
+      if (data.quality) {
+        if (![...qualSelect.options].some(o => parseInt(o.value) === data.quality)) {
+          const opt = document.createElement('option');
+          opt.value = data.quality;
+          opt.textContent = `${data.quality}% (Active)`;
+          qualSelect.appendChild(opt);
+        }
+        qualSelect.value = data.quality;
+      }
+    }
+  } catch (err) {
+    console.debug('Plate settings query skipped:', err);
+  }
+}
+
+async function updatePlateCamQuality() {
+  const resSelect = document.getElementById('plateResolutionSelect');
+  const qualSelect = document.getElementById('plateQualitySelect');
+  const statusSpan = document.getElementById('plateQualityStatus');
+  if (!resSelect || !qualSelect) return;
+
+  if (statusSpan) statusSpan.textContent = 'Applying...';
+  try {
+    const payload = {
+      video_size: resSelect.value,
+      quality: parseInt(qualSelect.value, 10),
+    };
+    const res = await fetch('/api/plate/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Update failed');
+    if (statusSpan) {
+      statusSpan.textContent = '✓ Saved';
+      setTimeout(() => { if (statusSpan) statusSpan.textContent = ''; }, 2500);
+    }
+  } catch (err) {
+    if (statusSpan) statusSpan.textContent = '✗ ' + err.message;
   }
 }
 
@@ -978,7 +1044,9 @@ function pipelineResetUi() {
   const platePlaceholder = document.getElementById('pipelinePlatePlaceholder');
   const plateFile = document.getElementById('pipelinePlateFile');
 
+  const camBtn = document.getElementById('pipelineCaptureCameraBtn');
   if (uploadBtn) uploadBtn.disabled = true;
+  if (camBtn) camBtn.disabled = true;
   if (personWrap) personWrap.style.display = 'none';
   if (faceStatus) faceStatus.style.display = 'none';
   if (plateStatus) plateStatus.style.display = 'none';
@@ -1013,6 +1081,7 @@ async function pipelineStart() {
   const personWrap = document.getElementById('pipelinePersonWrap');
   const personName = document.getElementById('pipelinePersonName');
   const uploadBtn = document.getElementById('pipelineUploadBtn');
+  const camBtn = document.getElementById('pipelineCaptureCameraBtn');
   const uploadHint = document.getElementById('pipelineUploadHint');
   const readyNote = document.getElementById('pipelineReadyNote');
 
@@ -1029,6 +1098,7 @@ async function pipelineStart() {
       pipelineRecognizedPerson = null;
       pipelineFaceScore = null;
       if (uploadBtn) uploadBtn.disabled = true;
+      if (camBtn) camBtn.disabled = true;
       if (personWrap) personWrap.style.display = 'none';
       return;
     }
@@ -1042,12 +1112,13 @@ async function pipelineStart() {
     if (data.status === 'recognized') {
       pipelineRecognizedPerson = data.person;
       pipelineFaceScore = data.score;
-      setStatus(statusBox, 'success', data.message + ' Please upload plate image to continue.');
+      setStatus(statusBox, 'success', data.message + ' Please capture or upload plate image to continue.');
       if (personName) personName.textContent = 'Recognized: ' + data.person;
       if (personWrap) personWrap.style.display = '';
       if (uploadBtn) uploadBtn.disabled = false;
+      if (camBtn) camBtn.disabled = false;
       if (uploadHint) {
-        uploadHint.textContent = 'Member recognized. Upload the plate image now.';
+        uploadHint.textContent = 'Member recognized. Click Auto-Capture or upload a plate image.';
       }
     } else if (data.status === 'unknown') {
       pipelineRecognizedPerson = null;
@@ -1055,6 +1126,7 @@ async function pipelineStart() {
       setStatus(statusBox, 'error', 'Face not recognized. Please enroll first.');
       if (personWrap) personWrap.style.display = 'none';
       if (uploadBtn) uploadBtn.disabled = true;
+      if (camBtn) camBtn.disabled = true;
       if (uploadHint) {
         uploadHint.textContent = 'Recognition failed. Enroll this member, then retry.';
       }
@@ -1064,6 +1136,7 @@ async function pipelineStart() {
       setStatus(statusBox, 'error', data.message || 'No face detected. Please try again.');
       if (personWrap) personWrap.style.display = 'none';
       if (uploadBtn) uploadBtn.disabled = true;
+      if (camBtn) camBtn.disabled = true;
       if (uploadHint) {
         uploadHint.textContent = 'No face detected. Start again and ensure face is visible.';
       }
@@ -1073,6 +1146,7 @@ async function pipelineStart() {
     pipelineRecognizedPerson = null;
     pipelineFaceScore = null;
     if (uploadBtn) uploadBtn.disabled = true;
+    if (camBtn) camBtn.disabled = true;
     if (personWrap) personWrap.style.display = 'none';
     if (uploadHint) {
       uploadHint.textContent = 'Connection issue. Retry face capture.';
@@ -1081,6 +1155,67 @@ async function pipelineStart() {
     setLoading(btn, false);
   }
 }
+
+async function pipelineCaptureFromCamera() {
+  const btn = document.getElementById('pipelineCaptureCameraBtn');
+  const uploadBtn = document.getElementById('pipelineUploadBtn');
+  const statusBox = document.getElementById('pipelinePlateStatus');
+  const previewImg = document.getElementById('pipelinePlateImg');
+  const placeholder = document.getElementById('pipelinePlatePlaceholder');
+  const readyNote = document.getElementById('pipelineReadyNote');
+
+  if (!pipelineRecognizedPerson) {
+    setStatus(statusBox, 'error', 'Run face recognition first.');
+    return;
+  }
+
+  setLoading(btn, true);
+  if (uploadBtn) uploadBtn.disabled = true;
+  setStatus(statusBox, 'loading', 'Capturing plate from phone camera & processing waste...');
+  if (readyNote) readyNote.style.display = 'none';
+
+  try {
+    const fd = new FormData();
+    fd.append('person', pipelineRecognizedPerson);
+    if (pipelineFaceScore !== null) {
+      fd.append('face_score', String(pipelineFaceScore));
+    }
+
+    const res = await fetch('/api/pipeline/capture_plate', {
+      method: 'POST',
+      body: fd,
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      setStatus(statusBox, 'error', 'Plate capture failed: ' + (data.detail || 'Server error'));
+      return;
+    }
+
+    if (data.image && previewImg) {
+      previewImg.src = data.image;
+      previewImg.style.display = 'block';
+      if (placeholder) placeholder.style.display = 'none';
+    }
+
+    setStatus(statusBox, 'success', data.message || 'Plate captured and processed successfully!');
+
+    if (readyNote) {
+      readyNote.style.display = 'block';
+      readyNote.textContent = 'Pipeline finished successfully! Resetting for next person in 5 seconds...';
+    }
+
+    setTimeout(() => {
+      pipelineResetUi();
+    }, 5000);
+  } catch (err) {
+    setStatus(statusBox, 'error', 'Error: ' + err.message);
+  } finally {
+    setLoading(btn, false);
+    if (uploadBtn && pipelineRecognizedPerson) uploadBtn.disabled = false;
+  }
+}
+window.pipelineCaptureFromCamera = pipelineCaptureFromCamera;
 
 async function pipelineUploadPlate() {
   const btn = document.getElementById('pipelineUploadBtn');

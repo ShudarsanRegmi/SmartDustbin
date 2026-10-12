@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Body
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -25,8 +25,8 @@ from database import record_pipeline_event, list_pipeline_events, summarize_pipe
 import shutil
 
 # Defaults only — actual values always come from .env via os.getenv() at call time
-_DEFAULT_ESP32_URL      = "http://11.12.20.131"
-_DEFAULT_PLATE_CAM_URL  = "http://11.12.20.132"
+_DEFAULT_ESP32_URL      = "http://10.144.234.241"
+_DEFAULT_PLATE_CAM_URL  = "http://10.144.234.246:8080"
 SETTINGS_FILE  = "face_db/settings.json"
 PROFILES_FILE  = "face_db/profiles.json"
 PHOTOS_DIR     = "face_db/photos"
@@ -141,6 +141,70 @@ def _fetch_image(url: str):
     if img is None:
         raise HTTPException(status_code=502, detail="Camera returned invalid image data")
     return img, r.content
+
+
+_PLATE_CANDIDATE_PATHS = ["/shot.jpg", "/photo.jpg", "/capture"]
+_CACHED_PLATE_PATH = None
+
+
+def _compress_and_resize_image(img: np.ndarray, raw_bytes: bytes, max_dim: int = 800, quality: int = 80):
+    """
+    Downscale and compress high-resolution images (e.g. from smartphones)
+    to a balanced dimension (default max 800px) and compact JPEG size (~40-80KB).
+    """
+    if img is None:
+        return img, raw_bytes
+
+    h, w = img.shape[:2]
+    # If image is already within max_dim and raw_bytes <= 200KB, keep as is
+    if max(h, w) <= max_dim and len(raw_bytes) <= 200 * 1024:
+        return img, raw_bytes
+
+    # Downscale maintaining aspect ratio
+    if max(h, w) > max_dim:
+        scale = max_dim / float(max(h, w))
+        new_w = max(1, int(w * scale))
+        new_h = max(1, int(h * scale))
+        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
+    success, enc = cv2.imencode(".jpg", img, encode_param)
+    if success:
+        return img, enc.tobytes()
+    return img, raw_bytes
+
+
+def _fetch_plate_image():
+    """Fetch a JPEG from the plate camera, automatically detecting IP Webcam phone or ESP32."""
+    global _CACHED_PLATE_PATH
+    base = _plate_base()
+    paths = [_CACHED_PLATE_PATH] if _CACHED_PLATE_PATH else []
+    for p in _PLATE_CANDIDATE_PATHS:
+        if p not in paths:
+            paths.append(p)
+
+    last_error = None
+    for path in paths:
+        try:
+            url = f"{base}{path}"
+            img, raw = _fetch_image(url)
+            img, raw = _compress_and_resize_image(img, raw, max_dim=800, quality=80)
+            _CACHED_PLATE_PATH = path
+            return img, raw
+        except Exception as e:
+            last_error = e
+            continue
+
+    raise HTTPException(status_code=502, detail=f"Plate camera unreachable at {base}: {last_error}")
+
+
+def _get_plate_stream_url(base: str) -> str:
+    """Determine live stream URL (IP Webcam uses /video, ESP32 uses /stream)."""
+    clean = base.rstrip("/")
+    if ":8080" in clean or "shot" in clean:
+        return f"{clean}/video"
+    return f"{clean}/stream"
+
 
 
 # ---------------------------------------------------------------------------
@@ -590,9 +654,11 @@ class ConfigUpdateRequest(BaseModel):
 
 @app.get("/api/config")
 def api_config():
+    p_base = _plate_base()
     return {
         "esp32_base": _esp32_base(),
-        "plate_base": _plate_base(),
+        "plate_base": p_base,
+        "plate_stream_url": _get_plate_stream_url(p_base),
     }
 
 
@@ -612,10 +678,12 @@ def api_update_config(data: ConfigUpdateRequest):
         _update_env_file("PLATE_CAM_URL", val)
 
     _save_settings(st)
+    p_base = _plate_base()
     return {
         "success": True,
         "esp32_base": _esp32_base(),
-        "plate_base": _plate_base(),
+        "plate_base": p_base,
+        "plate_stream_url": _get_plate_stream_url(p_base),
         "message": "Device configuration updated successfully without server restart."
     }
 
@@ -624,41 +692,43 @@ def api_update_config(data: ConfigUpdateRequest):
 def api_ping_device(target: str = "esp32", custom_url: Optional[str] = None):
     """Test connectivity to ESP32 or Plate Cam. Can test a custom_url before saving."""
     if custom_url and custom_url.strip():
-        base_url = _normalize_device_url(custom_url, _DEFAULT_ESP32_URL)
+        base_url = _normalize_device_url(custom_url, _DEFAULT_ESP32_URL if target == "esp32" else _DEFAULT_PLATE_CAM_URL)
     else:
         base_url = _esp32_base() if target == "esp32" else _plate_base()
 
     start_t = time.time()
-    try:
-        r = _session.get(f"{base_url}/capture", timeout=(2, 3))
-        latency = int((time.time() - start_t) * 1000)
-        return {
-            "online": True,
-            "url": base_url,
-            "status_code": r.status_code,
-            "latency_ms": latency,
-            "message": f"Connected ({latency}ms, status {r.status_code})"
-        }
-    except Exception as e:
+    if target == "esp32":
+        test_endpoints = [f"{base_url}/capture", base_url]
+    else:
+        test_endpoints = [f"{base_url}/shot.jpg", f"{base_url}/photo.jpg", f"{base_url}/capture", f"{base_url}/video", base_url]
+
+    last_err = None
+    for ep in test_endpoints:
         try:
-            r2 = _session.get(base_url, timeout=(1, 2))
+            r = _session.get(ep, timeout=(2, 3))
             latency = int((time.time() - start_t) * 1000)
+            dev_type = "Phone IP Webcam" if (":8080" in base_url or "shot" in ep or "photo" in ep) else "ESP32 Camera"
             return {
                 "online": True,
                 "url": base_url,
-                "status_code": r2.status_code,
+                "endpoint_used": ep,
+                "device_type": dev_type,
+                "status_code": r.status_code,
                 "latency_ms": latency,
-                "message": f"Connected ({latency}ms)"
+                "message": f"Connected ({latency}ms, {dev_type})"
             }
-        except Exception:
-            latency = int((time.time() - start_t) * 1000)
-            return {
-                "online": False,
-                "url": base_url,
-                "error": str(e),
-                "latency_ms": latency,
-                "message": f"Unreachable ({latency}ms)"
-            }
+        except Exception as e:
+            last_err = e
+            continue
+
+    latency = int((time.time() - start_t) * 1000)
+    return {
+        "online": False,
+        "url": base_url,
+        "error": str(last_err) if last_err else "Timeout",
+        "latency_ms": latency,
+        "message": f"Unreachable ({latency}ms)"
+    }
 
 
 @app.post("/api/flash")
@@ -672,15 +742,91 @@ def api_flash():
         raise HTTPException(status_code=502, detail=f"ESP32 unreachable: {e}")
 
 
+_phone_torch_state = False
+
+
 @app.post("/api/plate/flash")
 def api_plate_flash():
-    """Proxy flash-toggle for plate cam."""
+    """Proxy flash/torch toggle for plate cam (supports ESP32 /flash and IP Webcam /enabletorch|/disabletorch)."""
+    global _phone_torch_state
+    base = _plate_base()
+    # Try ESP32 /flash
     try:
-        r = _session.get(f"{_plate_base()}/flash", timeout=(4, 8))
-        r.raise_for_status()
-        return r.json()
-    except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"Plate cam unreachable: {e}")
+        r = _session.get(f"{base}/flash", timeout=(2, 4))
+        if r.status_code == 200:
+            try:
+                return r.json()
+            except Exception:
+                return {"flash": "on" if _phone_torch_state else "off"}
+    except Exception:
+        pass
+
+    # Try IP Webcam torch endpoints
+    try:
+        new_state = not _phone_torch_state
+        action = "enabletorch" if new_state else "disabletorch"
+        r = _session.get(f"{base}/{action}", timeout=(2, 4))
+        if r.status_code in (200, 204):
+            _phone_torch_state = new_state
+            return {
+                "flash": "on" if _phone_torch_state else "off",
+                "torch": _phone_torch_state,
+                "message": f"Phone torch {'enabled' if new_state else 'disabled'}"
+            }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Plate cam torch failed: {e}")
+
+    raise HTTPException(status_code=502, detail="Failed to toggle flash on plate camera")
+
+
+@app.get("/api/plate/settings")
+def api_get_plate_settings():
+    """Query current resolution and quality settings from plate camera if supported."""
+    base = _plate_base()
+    try:
+        r = _session.post(f"{base}/status.json?show_avail=1", timeout=(2, 3))
+        if r.status_code == 200:
+            data = r.json()
+            curvals = data.get("curvals", {})
+            avail = data.get("avail", {})
+            return {
+                "supported": True,
+                "type": "ipwebcam",
+                "video_size": curvals.get("video_size", "800x480"),
+                "quality": int(curvals.get("quality", 50)),
+                "available_sizes": avail.get("video_size", []),
+            }
+    except Exception:
+        pass
+    return {"supported": False, "type": "generic", "video_size": "", "quality": 0, "available_sizes": []}
+
+
+@app.post("/api/plate/settings")
+def api_set_plate_settings(payload: dict = Body(...)):
+    """Set resolution and/or quality remotely on plate camera (IP Webcam)."""
+    base = _plate_base()
+    video_size = payload.get("video_size")
+    quality = payload.get("quality")
+    updated = {}
+
+    if video_size:
+        try:
+            r = _session.get(f"{base}/settings/video_size?set={video_size}", timeout=(2, 4))
+            if r.status_code == 200:
+                updated["video_size"] = video_size
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Failed to set video_size: {e}")
+
+    if quality is not None:
+        try:
+            r = _session.get(f"{base}/settings/quality?set={quality}", timeout=(2, 4))
+            if r.status_code == 200:
+                updated["quality"] = quality
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Failed to set quality: {e}")
+
+    return {"status": "ok", "updated": updated}
+
 
 
 # ---------------------------------------------------------------------------
@@ -1016,6 +1162,7 @@ def api_pipeline_upload_plate(
     img = cv2.imdecode(img, cv2.IMREAD_COLOR)
     if img is None:
         raise HTTPException(status_code=400, detail="Invalid image file uploaded.")
+    img, raw = _compress_and_resize_image(img, raw, max_dim=800, quality=80)
 
     ts = time.strftime("%Y%m%d_%H%M%S")
     ms = int(time.time() * 1000) % 1000
@@ -1041,6 +1188,50 @@ def api_pipeline_upload_plate(
         "status": "completed",
         "event": event,
         "message": "Pipeline completed and saved for analytics.",
+    }
+
+
+@app.post("/api/pipeline/capture_plate")
+def api_pipeline_capture_plate(
+    person: str = Form(...),
+    face_score: Optional[float] = Form(default=None),
+):
+    """
+    Directly capture plate from the configured plate camera (Phone IP Webcam or ESP32),
+    classify waste, store event, and trigger servo cycle.
+    """
+    person = person.strip()
+    if not person:
+        raise HTTPException(status_code=400, detail="Face must be recognized first. Please run start pipeline.")
+
+    img, raw = _fetch_plate_image()
+
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    ms = int(time.time() * 1000) % 1000
+    filename = f"{ts}_{ms:03d}.jpg"
+    os.makedirs(PIPELINE_PLATES_DIR, exist_ok=True)
+    filepath = os.path.join(PIPELINE_PLATES_DIR, filename)
+    with open(filepath, "wb") as fh:
+        fh.write(raw)
+
+    waste_category = random.randint(1, 4)
+    servo = _run_reversed_servo_cycle(duration_seconds=4)
+
+    event = record_pipeline_event({
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "person": person,
+        "face_score": round(float(face_score), 4) if face_score is not None else None,
+        "plate_photo": f"/api/pipeline/plate_photo/{filename}",
+        "waste_category": waste_category,
+        "servo": servo,
+    })
+
+    encoded = base64.b64encode(raw).decode()
+    return {
+        "status": "completed",
+        "event": event,
+        "image": f"data:image/jpeg;base64,{encoded}",
+        "message": f"Plate captured from camera & waste class {waste_category} logged.",
     }
 
 
@@ -1088,8 +1279,8 @@ def _save_plate_events(events: list):
 
 @app.get("/api/plate/preview")
 def api_plate_preview():
-    """Snapshot from plate cam for preview (no event recorded)."""
-    _img, raw = _fetch_image(f"{_plate_base()}/capture")
+    """Snapshot from plate cam for preview (no event recorded). Supports phone IP Webcam and ESP32."""
+    _img, raw = _fetch_plate_image()
     encoded = base64.b64encode(raw).decode()
     return {"image": f"data:image/jpeg;base64,{encoded}"}
 
@@ -1099,8 +1290,9 @@ def api_plate_capture(person: str = Form(default="")):
     """
     Capture a plate photo, save it, and record a waste event.
     Optionally link it to an already-identified person name.
+    Supports phone IP Webcam and ESP32.
     """
-    _img, raw = _fetch_image(f"{_plate_base()}/capture")
+    _img, raw = _fetch_plate_image()
 
     ts       = time.strftime("%Y%m%d_%H%M%S")
     ms       = int(time.time() * 1000) % 1000

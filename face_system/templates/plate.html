@@ -24,6 +24,7 @@
     <div class="page-header">
       <h1>&#x1F37D;&#xFE0F; Plate Camera</h1>
       <p class="subtitle">Monitor food waste — capture plate photos, link them to identified students, and review history.</p>
+      <p class="muted small mt-xs">Active Camera: Phone IP Webcam or ESP32-CAM. Configurable via ⚙️ Settings in the top navbar.</p>
     </div>
 
     <div class="plate-layout">
@@ -44,7 +45,7 @@
               </svg>
               <span>Plate preview will appear here</span>
             </div>
-            <img id="platePrevImg" src="" alt="Plate preview" style="display:none;" />
+            <img id="platePrevImg" src="" alt="Plate preview" style="display:none; width:100%; height:100%; object-fit:cover; border-radius:inherit;" />
             <img id="plateStreamImg" alt="Live Stream" style="display:none; width:100%; height:100%; object-fit:cover;" />
           </div>
 
@@ -58,6 +59,33 @@
             <button class="btn btn-ghost" id="plateFlashBtn" onclick="togglePlateFlash()">
               &#x1F526; Flash
             </button>
+          </div>
+
+          <!-- Speed & Compression Settings -->
+          <div class="cam-settings-bar" id="plateCamSettingsBar" style="display:none; padding:0.6rem 0.75rem; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:var(--radius-sm); margin-top:0.75rem;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;">
+              <span style="font-weight:600; font-size:0.8rem; color:var(--text-muted);">&#x26A1; Camera Speed &amp; Compression</span>
+              <span id="plateQualityStatus" style="font-size:0.75rem; color:var(--accent);"></span>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.5rem;">
+              <div>
+                <label class="field-label" style="font-size:0.72rem; margin-bottom:0.2rem;" for="plateResolutionSelect">Resolution</label>
+                <select id="plateResolutionSelect" class="text-input" style="padding:0.3rem 0.5rem; font-size:0.8rem;" onchange="updatePlateCamQuality()">
+                  <option value="640x480">640×480 (Fastest - ~150ms)</option>
+                  <option value="800x480">800×480 (Balanced - Recommended)</option>
+                  <option value="1280x720">1280×720 (HD 720p)</option>
+                  <option value="1920x1080">1920×1080 (Full HD - Slower)</option>
+                </select>
+              </div>
+              <div>
+                <label class="field-label" style="font-size:0.72rem; margin-bottom:0.2rem;" for="plateQualitySelect">JPEG Quality</label>
+                <select id="plateQualitySelect" class="text-input" style="padding:0.3rem 0.5rem; font-size:0.8rem;" onchange="updatePlateCamQuality()">
+                  <option value="35">35% (Light / Fast)</option>
+                  <option value="50">50% (Standard - ~10KB)</option>
+                  <option value="75">75% (High Quality)</option>
+                </select>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -106,6 +134,7 @@
   <script>
     loadConfig();
     loadPlateEvents();
+    loadPlateCamSettings();
   </script>
 </body>
 </html>

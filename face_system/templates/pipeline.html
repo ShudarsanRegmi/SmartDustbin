@@ -71,13 +71,26 @@
 
           <div class="preview-box pipeline-preview-compact" id="pipelinePlatePreviewBox">
             <div class="preview-placeholder" id="pipelinePlatePlaceholder">
-              <span>Uploaded plate image preview appears here</span>
+              <span>Plate preview appears here</span>
             </div>
-            <img id="pipelinePlateImg" src="" alt="Plate upload preview" style="display:none;" />
+            <img id="pipelinePlateImg" src="" alt="Plate preview" style="display:none; width:100%; height:100%; object-fit:cover; border-radius:inherit;" />
           </div>
 
-          <button class="btn btn-secondary full-width mt-sm" id="pipelineUploadBtn" disabled>
-            Upload Plate and Complete Pipeline
+          <button class="btn btn-primary full-width mt-sm" id="pipelineCaptureCameraBtn" onclick="pipelineCaptureFromCamera()" disabled>
+            &#x1F4F8; Auto-Capture from Phone / Plate Cam
+          </button>
+
+          <div style="display:flex;align-items:center;margin:0.6rem 0;color:var(--text-muted);font-size:0.78rem;text-align:center;">
+            <div style="flex:1;height:1px;background:var(--border);"></div>
+            <span style="padding:0 0.5rem;">OR manual upload</span>
+            <div style="flex:1;height:1px;background:var(--border);"></div>
+          </div>
+
+          <label class="field-label" for="pipelinePlateFile">Upload Plate Image</label>
+          <input id="pipelinePlateFile" class="text-input" type="file" accept="image/*" />
+
+          <button class="btn btn-secondary full-width mt-xs" id="pipelineUploadBtn" disabled>
+            Upload File and Complete Pipeline
           </button>
 
           <div id="pipelinePlateStatus" class="status-box" style="display:none;"></div>
