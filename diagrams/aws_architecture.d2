@@ -1,0 +1,188 @@
+direction: right
+
+title: "AWS Cloud Architecture - Smart Dustbin & Waste Profiling System" {
+  near: top-center
+  shape: text
+  style: {
+    font-size: 28
+    bold: true
+  }
+}
+
+edge_layer: "1. Edge & Hardware Layer (ESP32 Nodes)" {
+  style: {
+    fill: "#F4F6F8"
+    stroke: "#708090"
+    stroke-dash: 2
+  }
+
+  face_cam: "ESP32-CAM\n(Face Camera Node)\n• /capture frame\n• Flash on GPIO4" {
+    shape: rectangle
+    style.fill: "#E8F0FE"
+    style.stroke: "#1A73E8"
+  }
+
+  plate_cam: "ESP32-CAM\n(Plate Camera Node)\n• Waste image capture" {
+    shape: rectangle
+    style.fill: "#E8F0FE"
+    style.stroke: "#1A73E8"
+  }
+
+  servo_node: "Lid Actuator Node\n• ESP32 & Servo Motor\n• Control on GPIO13\n• Mechanical Lid" {
+    shape: rectangle
+    style.fill: "#FEF7E0"
+    style.stroke: "#F9AB00"
+  }
+
+  web_ui: "Web Dashboard\n• User Interface\n• Real-time Status" {
+    shape: rectangle
+    style.fill: "#E6F4EA"
+    style.stroke: "#137333"
+  }
+}
+
+aws_cloud: "AWS Cloud Infrastructure" {
+  style: {
+    fill: "#FAFAFA"
+    stroke: "#FF9900"
+    stroke-width: 2
+  }
+
+  iot_tier: "IoT & Ingestion Tier" {
+    style: {
+      fill: "#FFF8E1"
+      stroke: "#FFB300"
+    }
+
+    iot_core: "AWS IoT Core\n• MQTT Message Broker\n• Device Shadow (Lid State)\n• IoT Rules Engine" {
+      shape: hexagon
+      style.fill: "#FFE082"
+      style.stroke: "#FF8F00"
+      style.bold: true
+    }
+  }
+
+  compute_tier: "Compute & Application Tier" {
+    style: {
+      fill: "#EDE7F6"
+      stroke: "#7E57C2"
+    }
+
+    backend: "FastAPI Backend\n(AWS App Runner / ECS Fargate)\n• Automata State Machine\n• Event Orchestrator\n• REST & WebSocket API" {
+      shape: rectangle
+      style.fill: "#D1C4E9"
+      style.stroke: "#512DA8"
+      style.bold: true
+    }
+  }
+
+  ai_tier: "AI & Computer Vision Services" {
+    style: {
+      fill: "#E0F2F1"
+      stroke: "#00897B"
+    }
+
+    rekognition: "Amazon Rekognition\n• User Face Matching\n• Face Collections\n• Liveness & Confidence" {
+      shape: rectangle
+      style.fill: "#B2DFDB"
+      style.stroke: "#00695C"
+    }
+
+    sagemaker: "Amazon SageMaker\n• Waste Categorization Model\n• Material Classification\n(Plastic, Organic, Paper, Metal)" {
+      shape: rectangle
+      style.fill: "#B2DFDB"
+      style.stroke: "#00695C"
+    }
+  }
+
+  storage_tier: "Storage & Database Tier" {
+    style: {
+      fill: "#E8EAF6"
+      stroke: "#3F51B5"
+    }
+
+    s3: "Amazon S3\n• Face Snapshots\n• Plate Captures\n• Model Artifacts" {
+      shape: cylinder
+      style.fill: "#C5CAE9"
+      style.stroke: "#283593"
+    }
+
+    dynamodb: "Amazon DynamoDB\n• Events Table\n  (UserID, Timestamp, Category,\n   LidStatus, FaceScore)\n• User Profiles" {
+      shape: cylinder
+      style.fill: "#C5CAE9"
+      style.stroke: "#283593"
+    }
+  }
+
+  notify_tier: "Monitoring & Notifications" {
+    style: {
+      fill: "#FCE4EC"
+      stroke: "#D81B60"
+    }
+
+    sns: "Amazon SNS\n• Bin Full Alerts\n• Tamper / Fault Alerts" {
+      shape: rectangle
+      style.fill: "#F8BBD0"
+      style.stroke: "#C2185B"
+    }
+
+    quicksight: "Amazon QuickSight\n• Waste Analytics\n• Recycling Trend Reports" {
+      shape: rectangle
+      style.fill: "#F8BBD0"
+      style.stroke: "#C2185B"
+    }
+  }
+}
+
+# Interactions and Flow
+edge_layer.face_cam -> aws_cloud.iot_tier.iot_core: "1. Face Frame (MQTT)" {
+  style.stroke: "#1A73E8"
+}
+
+edge_layer.plate_cam -> aws_cloud.iot_tier.iot_core: "4. Plate Frame (MQTT)" {
+  style.stroke: "#1A73E8"
+}
+
+aws_cloud.iot_tier.iot_core -> aws_cloud.compute_tier.backend: "Ingest Frames & State" {
+  style.stroke: "#FF8F00"
+}
+
+aws_cloud.compute_tier.backend -> aws_cloud.ai_tier.rekognition: "2. Verify Face" {
+  style.stroke: "#00897B"
+}
+
+aws_cloud.compute_tier.backend -> aws_cloud.ai_tier.sagemaker: "5. Classify Waste" {
+  style.stroke: "#00897B"
+}
+
+aws_cloud.compute_tier.backend -> aws_cloud.storage_tier.s3: "Store Images" {
+  style.stroke: "#283593"
+}
+
+aws_cloud.compute_tier.backend -> aws_cloud.storage_tier.dynamodb: "3, 6. Log Events" {
+  style.stroke: "#283593"
+}
+
+aws_cloud.compute_tier.backend -> aws_cloud.iot_tier.iot_core: "7. Actuate Lid (Open/Close)" {
+  style.stroke: "#D81B60"
+  style.bold: true
+}
+
+aws_cloud.iot_tier.iot_core -> edge_layer.servo_node: "PWM / GPIO13 Command" {
+  style.stroke: "#F9AB00"
+  style.bold: true
+}
+
+aws_cloud.storage_tier.dynamodb -> aws_cloud.notify_tier.quicksight: "Analytics Stream" {
+  style.stroke: "#7E57C2"
+  style.stroke-dash: 3
+}
+
+aws_cloud.compute_tier.backend -> aws_cloud.notify_tier.sns: "Alert Triggers" {
+  style.stroke: "#D81B60"
+  style.stroke-dash: 3
+}
+
+edge_layer.web_ui <-> aws_cloud.compute_tier.backend: "Dashboard & Controls (HTTPS / WSS)" {
+  style.stroke: "#137333"
+}
